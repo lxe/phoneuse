@@ -142,7 +142,18 @@ phoneuse gesture down 0.2 0.3 hold 1.0 move 0.7 0.6 1.0 hold 0.5 up # press, the
 phoneuse gesture down 0.5 0.4 up hold 0.1 down 0.5 0.4 up           # double tap
 ```
 
-MCP: `gesture(steps="down 0.5 0.4 hold 0.8 up")`. Build what the task needs out of
+MCP: `gesture(steps="down 0.5 0.4 hold 0.8 up")`.
+
+**Every gesture comes back as a film**: one image with a frame at the end of each
+move, at the end of each hold while the finger is down, just before a long press
+lifts, and 0.3 and 0.8 s after the lift (frames that didn't change are merged).
+Each frame is labelled with its step, and a ring marks the finger (orange with a
+dot while down, white once up). MCP returns it with the result; the CLI saves it
+and prints `film: PATH`, so Read that file when the gesture's middle matters. Use
+it to see what the phone did before the finger lifted (icons shifting aside, a
+folder forming, a menu opening) and to fix the next gesture from that.
+
+Build what the task needs out of
 these steps: hold longer, drag slower, pause over a target, drag on, hold at a
 screen edge to change pages. Slow moves (0.6-1.5 s across most of the screen) are
 the steadiest. A fast move right before `up` flings scrolling content; for content,

@@ -33,6 +33,11 @@ MCP: `gesture(steps="down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up")`.
   0.6-1.5 s: slow moves are steadier.
 - Moves can chain with holds between them, for as long as you need, up to 30 s
   per step: drag, pause over a target, drag on.
+- Each gesture records a film: a frame at the end of every move, at the end of
+  every hold with the finger down, before a long press lifts, and 0.3 and 0.8 s
+  after the lift, labelled, with the finger marked (film.py). MCP returns it; the
+  CLI prints `film: PATH` (`--film PATH` chooses the file). To see a moment, end a
+  step there: `hold 0.4` mid-drag adds a frame of the phone at that point.
 - Moving fast in the last instant before `up` flings scrolling content. To stop
   content exactly, end with a short slow move, or use `scroll` / `scroll-by`,
   which do that for you.

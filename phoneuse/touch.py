@@ -338,10 +338,12 @@ def describe_gesture(steps):
     return " ".join(out)
 
 
-def gesture(hid, steps):
+def gesture(hid, steps, film=None):
     """Run parsed gesture steps. A press that stays put (down, hold, up) goes as one
     timed tap, so a slow link can't stretch or cut the hold; anything that moves is
-    an absolute press, relative motion and an absolute release (see the top)."""
+    an absolute press, relative motion and an absolute release (see the top).
+    `film` (film.Film): frames at the end of each move, the end of each hold with the
+    finger down, just before a long press lifts, and after the last lift."""
     t = Touch(hid)
     i = 0
     try:
@@ -352,7 +354,10 @@ def gesture(hid, steps):
                 while j < len(steps) and steps[j][0] == "hold":
                     held, j = held + steps[j][1], j + 1
                 if j < len(steps) and steps[j][0] == "up" and held <= BRIDGE_TAP_MAX:
-                    tap(hid, s[1], s[2], hold=max(held, 0.06), settle=t.pos != (s[1], s[2]))
+                    settle = t.pos != (s[1], s[2])
+                    if film and held >= 0.3:  # what the press shows just before it lifts
+                        film.mark(f"hold {held:g}", (s[1], s[2]), True, (0.2 if settle else 0.0) + held - 0.1)
+                    tap(hid, s[1], s[2], hold=max(held, 0.06), settle=settle)
                     t.pos = t.target = (s[1], s[2])
                     i = j + 1
                     continue
@@ -360,13 +365,20 @@ def gesture(hid, steps):
                 time.sleep(0.02)
             elif s[0] == "move":
                 _move(t, s[1], s[2], s[3])
+                if film:  # a moment later when the finger rests next, so the picture catches up
+                    rests = i + 1 < len(steps) and steps[i + 1][0] == "hold" and steps[i + 1][1] >= 0.15
+                    film.mark("move", t.pos, True, 0.1 if rests else 0.0)
             elif s[0] == "hold":
                 time.sleep(s[1])
+                if film and t.down:
+                    film.mark(f"hold {s[1]:g}", t.pos, True)
             elif s[0] == "up":
                 t.release()
             i += 1
     finally:
         t.release()
+        if film and t.pos:
+            film.lifted(t.pos)
 
 
 def _move(t, fx, fy, duration):

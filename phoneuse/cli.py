@@ -28,6 +28,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
   phoneuse recipe NAME [VALUES] run a named gesture: back, switcher, control-center,
                                 notifications, dismiss, home, long-press X Y [S], and
                                 any saved ones ($1, $2... in a recipe take VALUES)
+                                Both save a film of the gesture: frames at the end of
+                                each step and after the lift, in one image (--film PATH)
   phoneuse recipe list          every recipe and its steps
   phoneuse recipe save NAME STEPS... [-- WHAT IT DOES]
                                 keep a gesture that works under a name (~/.config/phoneuse/
@@ -1910,6 +1912,19 @@ GESTURE_HELP = """A gesture is steps for one finger:
 e.g. phoneuse gesture down 0.2 0.3 hold 1.0 move 0.7 0.6 1.2 hold 0.5 up"""
 
 
+def save_film(f, path=None):
+    """The gesture's frames (film.py) as one JPEG: returns a line for the agent."""
+    from . import film
+    frames = film.keep_changed(f.finish())
+    img, legend = film.compose(frames)
+    if img is None:
+        return f"film: {legend}"
+    save_look(frames[-1][2])  # the agent was shown the last frame (if it reads the film)
+    path = path or runtime_path("phoneuse-film.jpg")
+    img.save(path, "JPEG", quality=82)
+    return f"film: {path} ({img.width}x{img.height}). {legend}"
+
+
 def recipe_source(name):
     from . import recipes
     try:
@@ -2028,6 +2043,12 @@ def main():
         return screenshot(paths[0] if paths else runtime_path("phoneuse.png"))
     force = "--force" in args
     args = [a for a in args if a != "--force"]
+    film_path = None
+    if cmd in ("gesture", "recipe") and "--film" in args:
+        k = args.index("--film")
+        if k + 1 >= len(args):
+            die("--film needs a file path")
+        film_path, args = args[k + 1], args[:k] + args[k + 2:]
     if cmd == "recipe" and (not args or args[0] in ("list", "save", "forget")):
         return recipe_cmd(args)
     steps = None
@@ -2059,7 +2080,12 @@ def main():
         if steps is None:
             home(h)
         else:
-            touch.gesture(h, steps)
+            from . import film
+            f = film.Film()
+            try:
+                touch.gesture(h, steps, film=f)
+            finally:
+                NOTES.append(save_film(f, film_path))
     elif cmd == "scroll":
         scroll(h, args[0] if args else "down", float(args[1]) if len(args) > 1 else 1.0)
     elif cmd == "scroll-by":

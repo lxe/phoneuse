@@ -236,6 +236,22 @@ def test_recipe_values():
     recipes.FILE = saved_file
 
 
+def test_film_merges_still_frames_and_fits_budget():
+    from PIL import Image
+    from phoneuse import film
+    a, b = Image.new("RGB", (804, 1748), (20, 20, 20)), Image.new("RGB", (804, 1748), (200, 200, 200))
+    frames = [("hold 0.4", (0.2, 0.3, True), a), ("move", (0.7, 0.6, True), a), ("hold 0.5", (0.7, 0.6, True), a),
+              ("up +0.3s", (0.7, 0.6, False), b), ("up +0.8s", (0.7, 0.6, False), b)]
+    kept = film.keep_changed(frames)
+    # the hold after the move shows the same picture with the finger in the same place
+    assert [k[0] for k in kept] == ["hold 0.4", "move, hold 0.5", "up +0.3s, up +0.8s"]
+    img, legend = film.compose(kept)
+    assert img.width * img.height <= film.BUDGET * 1.05 and img.height <= film.MAX_H
+    assert legend.startswith("3 frames")
+    many = [(f"move {i}", (i / 20, 0.5, True), a if i % 2 else b) for i in range(20)]
+    assert len(film.keep_changed(many)) == film.MAX_FRAMES
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

@@ -30,7 +30,7 @@ from .config import runtime_path
 # first (a module that does "from .x import y" copies y when it loads). The
 # tools' own names, arguments and descriptions are read once at start, so
 # changes to this file still need a restart.
-RELOAD_ORDER = ["config", "hidclient", "phones", "screen", "touch", "recipes", "pointer", "calibrate", "unlock", "cli"]
+RELOAD_ORDER = ["config", "hidclient", "phones", "screen", "touch", "recipes", "film", "pointer", "calibrate", "unlock", "cli"]
 _PKG = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -218,6 +218,33 @@ def _act(action, look):
     return ["\n".join([msg] + cli.NOTES)] + screen_parts
 
 
+def _gesture_act(steps, look):
+    """Run gesture steps. With look="strip", the result shows the gesture itself: frames
+    from the end of each step and after the lift (film.py), in one image, with the
+    text of the last frame."""
+    if look != "strip":
+        return _act(lambda h: touch.gesture(h, steps), look)
+    from . import film as filmmod
+    f = filmmod.Film()
+    parts = _act(lambda h: touch.gesture(h, steps, film=f), "none")
+    frames = filmmod.keep_changed(f.finish())
+    img, legend = filmmod.compose(frames)
+    if img is None:
+        return parts + [legend]
+    last = frames[-1][2]
+    cli.save_look(last)  # the agent's newest view: taps by position are checked against it
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=82)
+    path = runtime_path(f"phoneuse-film-{os.getpid()}.png")
+    last.save(path)
+    try:
+        ok, lines = _quietly(lambda: cli.screen_text(shot=path))
+        text = "\n".join(f"{x:.3f} {y:.3f}  {t}" for x, y, t in lines) if ok else lines
+    finally:
+        os.unlink(path)
+    return parts + [Image(data=buf.getvalue(), format="jpeg"), legend + "\nText of the last frame:\n" + text]
+
+
 def _pt(x, y):
     return cli.point(str(x), str(y))
 
@@ -285,12 +312,16 @@ def gesture(steps: str, look: Look = "strip", force: bool = False) -> list:
     Drag an icon on the home screen: "down 0.2 0.3 hold 1.0 move 0.7 0.6 1.0 hold 0.5 up".
     Double tap: "down X Y up hold 0.1 down X Y up". A fast last move flings scrolling
     content; end with a short slow move (e.g. 20 pt over 0.2 s) to stop exactly.
-    Refused like tap when the area under the first down moved since your last view."""
+    Refused like tap when the area under the first down moved since your last view.
+    The result shows the gesture as it ran: a frame at the end of each move, at the
+    end of each hold with the finger down, before a long press lifts, and 0.3 and
+    0.8 s after the lift, with a ring where the finger was. Check those frames to see
+    what the phone did mid-gesture (icons shifting, a folder forming, a menu)."""
     try:
         parsed = cli.parse_gesture(steps)
     except touch.GestureError as e:
         return [f"error: {e}"]
-    return _guard(*first_xy(parsed), force) or _act(lambda h: touch.gesture(h, parsed), look)
+    return _guard(*first_xy(parsed), force) or _gesture_act(parsed, look)
 
 
 def first_xy(steps):
@@ -314,7 +345,7 @@ def recipe(name: str, values: list[float] | None = None, look: Look = "strip", f
         blocked = _guard(*first_xy(steps), force)
         if blocked:
             return blocked
-    return _act(lambda h: touch.gesture(h, steps), look)
+    return _gesture_act(steps, look)
 
 
 @tool
