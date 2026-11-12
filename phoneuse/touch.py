@@ -253,15 +253,151 @@ def scroll_drag(hid, fx0, fy0, fx1, fy1):
     t.release()
 
 
-# ---------- scripted gestures (for agents) ----------
+# ---------- gestures (for agents) ----------
+# One finger, described as steps (the `gesture` command and MCP tool):
+#   down X Y      touch down at (X, Y); the pointer goes there and settles first
+#   move X Y [S]  slide to (X, Y) over S seconds (default MOVE_SECONDS), finger down
+#   hold S        keep still for S seconds (finger down or up)
+#   up            lift (a gesture ends lifted anyway)
+# X and Y are screen fractions (0..1) here; the CLI and MCP convert points first.
 
-def tap(hid, fx, fy, hold=0.06):
+MOVE_SECONDS = 0.3
+BRIDGE_TAP_MAX = 3.0  # s: the bridge times holds up to 3 s (bridge.py tap)
+
+
+class GestureError(ValueError):
+    pass
+
+
+def parse_gesture(text, point=lambda x, y: (float(x), float(y))):
+    """Steps from gesture text ("down 0.5 0.6 hold 1 move 0.5 0.2 0.8 up"; commas
+    and semicolons may separate steps). `point` turns an X, Y pair into fractions."""
+    words = text.replace(",", " ").replace(";", " ").split()
+    steps, i, down = [], 0, False
+
+    def num(k, what):
+        try:
+            return float(words[k])
+        except (IndexError, ValueError):
+            raise GestureError(f"{words[i]} needs {what} (step {len(steps) + 1})") from None
+
+    while i < len(words):
+        w = words[i].lower()
+        if w == "down":
+            if down:
+                raise GestureError("down while the finger is already down: add up first")
+            num(i + 2, "X Y")
+            steps.append(("down", *point(words[i + 1], words[i + 2])))
+            down, i = True, i + 3
+        elif w == "move":
+            if not down:
+                raise GestureError("move with the finger up: start with down X Y")
+            num(i + 2, "X Y")
+            x, y = point(words[i + 1], words[i + 2])
+            secs, i = MOVE_SECONDS, i + 3
+            if i < len(words):
+                try:
+                    secs, i = float(words[i]), i + 1
+                except ValueError:
+                    pass
+            if not 0 <= secs <= 30:
+                raise GestureError("a move takes 0 to 30 seconds")
+            steps.append(("move", x, y, secs))
+        elif w in ("hold", "wait"):
+            secs = num(i + 1, "seconds")
+            if not 0 <= secs <= 30:
+                raise GestureError("hold takes 0 to 30 seconds")
+            steps.append(("hold", secs))
+            i += 2
+        elif w == "up":
+            if not down:
+                raise GestureError("up with the finger already up")
+            steps.append(("up",))
+            down, i = False, i + 1
+        else:
+            raise GestureError(f"unknown step {words[i]!r}: use down X Y, move X Y [S], hold S, up")
+    if not any(s[0] == "down" for s in steps):
+        raise GestureError("a gesture needs at least one down X Y")
+    if down:
+        steps.append(("up",))
+    return steps
+
+
+def describe_gesture(steps):
+    """The steps back as text, in fractions (for messages)."""
+    out = []
+    for s in steps:
+        if s[0] in ("down",):
+            out.append(f"down {s[1]:.3f} {s[2]:.3f}")
+        elif s[0] == "move":
+            out.append(f"move {s[1]:.3f} {s[2]:.3f} {s[3]:g}")
+        elif s[0] == "hold":
+            out.append(f"hold {s[1]:g}")
+        else:
+            out.append("up")
+    return " ".join(out)
+
+
+def gesture(hid, steps):
+    """Run parsed gesture steps. A press that stays put (down, hold, up) goes as one
+    timed tap, so a slow link can't stretch or cut the hold; anything that moves is
+    an absolute press, relative motion and an absolute release (see the top)."""
+    t = Touch(hid)
+    i = 0
+    try:
+        while i < len(steps):
+            s = steps[i]
+            if s[0] == "down":
+                held, j = 0.0, i + 1
+                while j < len(steps) and steps[j][0] == "hold":
+                    held, j = held + steps[j][1], j + 1
+                if j < len(steps) and steps[j][0] == "up" and held <= BRIDGE_TAP_MAX:
+                    tap(hid, s[1], s[2], hold=max(held, 0.06), settle=t.pos != (s[1], s[2]))
+                    t.pos = t.target = (s[1], s[2])
+                    i = j + 1
+                    continue
+                t.press(s[1], s[2])
+                time.sleep(0.02)
+            elif s[0] == "move":
+                _move(t, s[1], s[2], s[3])
+            elif s[0] == "hold":
+                time.sleep(s[1])
+            elif s[0] == "up":
+                t.release()
+            i += 1
+    finally:
+        t.release()
+
+
+def _move(t, fx, fy, duration):
+    """Slide the held finger from where it is to (fx, fy) over `duration` seconds: one
+    relative report per tick toward a target that advances with time, then until it
+    is within one report of the end."""
+    fx, fy = _clamp(fx), _clamp(fy)
+    x0, y0 = t.target or t.pos
+    t0 = time.time()
+    while True:
+        k = min(1.0, (time.time() - t0) / max(duration, TICK))
+        t.target = (x0 + (fx - x0) * k, y0 + (fy - y0) * k)
+        left = t.step()
+        # Done once what's left is less than the smallest report can move: waiting
+        # longer holds the finger still, and a resting finger doesn't fling.
+        if k >= 1.0 and left < max(1.0, DRAG_PTS[0][1]):
+            break
+        if k >= 1.0 and time.time() - t0 > duration + 2.0:
+            break
+        time.sleep(TICK)
+
+
+def tap(hid, fx, fy, hold=0.06, settle=True):
     """Move the pointer to (fx, fy), let it settle, then tap: the press and release go
     as one daemon command (timed on the bridge, when there is one), so a slow link
-    can't turn a tap into a long press."""
+    can't turn a tap into a long press. settle=False when the pointer is already there
+    (the second tap of a double tap)."""
     fx, fy = _clamp(fx), _clamp(fy)
-    hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
-    time.sleep(0.2)  # the pointer may jump far; pressing mid-jump starts a drag
+    if settle:
+        hid.cmd(f"a {fx:.5f} {fy:.5f} 0")
+        time.sleep(0.2)  # the pointer may jump far; pressing mid-jump starts a drag
     try:
         hid.cmd(f"tap {fx:.5f} {fy:.5f} {hold:.3f}")
     except RuntimeError as e:
@@ -275,26 +411,9 @@ def tap(hid, fx, fy, hold=0.06):
 
 
 def long_press(hid, fx, fy, hold=0.8):
-    tap(hid, fx, fy, hold)
+    gesture(hid, [("down", fx, fy), ("hold", hold), ("up",)])
 
 
 def swipe(hid, fx0, fy0, fx1, fy1, duration=0.3, hold_end=0.0):
     """Finger down at (fx0, fy0), move to (fx1, fy1) over `duration`, lift."""
-    t = Touch(hid)
-    t.press(fx0, fy0)
-    time.sleep(0.02)
-    t0 = time.time()
-    while True:
-        k = min(1.0, (time.time() - t0) / max(duration, TICK))
-        t.target = (fx0 + (fx1 - fx0) * k, fy0 + (fy1 - fy0) * k)
-        left = t.step()
-        # Done once what's left is less than the smallest report can move: waiting
-        # longer holds the finger still before the lift, and a resting finger
-        # doesn't fling (it used to sit here for a second, until the timeout).
-        if k >= 1.0 and left < max(1.0, DRAG_PTS[0][1]):
-            break
-        if k >= 1.0 and time.time() - t0 > duration + 1.0:
-            break
-        time.sleep(TICK)
-    time.sleep(hold_end)
-    t.release()
+    gesture(hid, [("down", fx0, fy0), ("move", fx1, fy1, duration), ("hold", hold_end), ("up",)])

@@ -40,8 +40,8 @@ the full list.
 
 ## MCP or CLI
 
-If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `scroll`, `scroll_by`, `cursor`, `calibrate`,
-`type_text`, `open_app`, `navigate`, `wait`, `read_notifications`, ...), use them.
+If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `gesture`, `recipe`, `scroll`, `scroll_by`,
+`type_text`, `open_app`, `wait`, `read_notifications`, ...), use them.
 Every action first waits (up to 3 s) for the phone's first visible change, then
 returns frames from it (0.1, 0.4 and 0.8 s; frames that didn't change are
 dropped, so a still screen is one frame) plus the last frame as text lines with
@@ -113,31 +113,65 @@ Every round trip with the phone costs you a turn, so make each one count.
   `phoneuse scroll down 0.6` moves the content without momentum, so it stops where
   the finger lifts and your next screenshot stays true. A flick keeps the feed
   gliding after your screenshot, and a tap from that picture hits the wrong post.
-- **Flicks only for snap feeds**: `phoneuse swipe 0.5 0.75 0.5 0.25 0.2` moves
+- **Flicks only for snap feeds**: `phoneuse gesture down 0.5 0.75 move 0.5 0.25 0.2 up` moves
   Reels, TikTok or Shorts to the next item.
-- **Taps by position are checked**: `tap`, `longpress` and `swipe` refuse when the
+- **Taps by position are checked**: `tap` and `gesture` (at its first `down`) refuse when the
   area around the point changed since your last look (screenshot, `--text`, or an
   MCP action's frames), because the position then belongs to something else. Look
   again and tap. `--force` (MCP: `force=True`) taps anyway, for fixed controls like
   a tab bar right after a page change.
 - **Repeat cheap actions in one call** when you know the layout, e.g. three
   flicks with a text read after each:
-  `for i in 1 2 3; do phoneuse swipe 0.5 0.75 0.5 0.25 0.2 --text | head -8; done`.
+  `for i in 1 2 3; do phoneuse gesture down 0.5 0.75 move 0.5 0.25 0.2 up --text | head -8; done`.
 
-## Commands that work (verified on the device)
+## Gestures: every touch
+
+Any touch other than a plain tap is a **gesture**: steps for one finger, in order.
+
+```
+down X Y      touch down at X Y (the pointer moves there and settles first)
+move X Y [S]  slide to X Y over S seconds (default 0.3), finger still down
+hold S        stay still S seconds (finger down or up)
+up            lift (a gesture ends lifted anyway)
+```
+
+```bash
+phoneuse gesture down 0.5 0.4 hold 0.8 up                           # long press
+phoneuse gesture down 0.5 0.8 move 0.5 0.2 0.3 up                   # swipe up
+phoneuse gesture down 0.2 0.3 hold 1.0 move 0.7 0.6 1.0 hold 0.5 up # press, then drag (move an icon)
+phoneuse gesture down 0.5 0.4 up hold 0.1 down 0.5 0.4 up           # double tap
+```
+
+MCP: `gesture(steps="down 0.5 0.4 hold 0.8 up")`. Build what the task needs out of
+these steps: hold longer, drag slower, pause over a target, drag on, hold at a
+screen edge to change pages. Slow moves (0.6-1.5 s across most of the screen) are
+the steadiest. A fast move right before `up` flings scrolling content; for content,
+use `scroll` or `scroll-by`, which stop exactly.
+
+**Recipes** are gestures with names: `phoneuse recipe back` (MCP: `recipe("back")`).
+Built in: `back`, `switcher`, `control-center`, `notifications`, `dismiss`, `home`
+(the Home key) and `long-press X Y [S]`. `phoneuse recipe list` (MCP: `recipes`)
+shows each one's steps. When a gesture works for something you'll do again, save it
+for this and later sessions, with `$1`, `$2`... for values given when it runs:
+
+```bash
+phoneuse recipe save move-icon down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up -- drag a home screen icon
+phoneuse recipe move-icon 0.2 0.3 0.7 0.6
+```
+
+MCP: `save_recipe(name, steps, about)`. [RECIPES.md](RECIPES.md), next to this file,
+has the gesture table and how each recipe was measured; read it before a gesture
+you haven't done before.
+
+## Other commands (verified on the device)
 
 | Goal | Command |
 |---|---|
 | Open an app | `phoneuse open Settings` (Cmd+H, Cmd+Space, type the name, Enter) |
-| Tap / long press | `phoneuse tap X Y` · `phoneuse longpress X Y [seconds]` |
-| Swipe or drag | `phoneuse swipe X0 Y0 X1 Y1 [seconds]` |
+| Tap | `phoneuse tap X Y` |
 | Scroll | `phoneuse scroll down [N]` · `phoneuse scroll up [N]` (N half-screens; stops where the drag ends, no fling) |
 | Scroll an exact amount | `phoneuse scroll-by DY` (screen fraction or points; positive shows what is below). MCP: `scroll_by` |
-| Back | `phoneuse back` (finger sliding in from the very left edge) |
-| Home | `phoneuse home` |
-| App switcher | `phoneuse switcher` |
-| Control Center / Notification Center | `phoneuse control-center` · `phoneuse notifications` |
-| Close those overlays | `phoneuse dismiss` (Cmd+H does not close them) |
+| Home, back, overlays | `phoneuse home` · `back` · `switcher` · `control-center` · `notifications` · `dismiss` (the recipes; Cmd+H does not close overlays) |
 | Type text / keys | `phoneuse type "hello\n"` · `phoneuse key cmd+space` |
 | Show / hide the iPhone keyboard | `phoneuse keyboard` (Eject; it hides while Phone Use's keyboard is connected) |
 | Keep the screen from locking | `phoneuse awake on` / `off` (a few-pixel pointer nudge each second while nobody uses the phone; also the page's settings) |
@@ -146,9 +180,6 @@ Every round trip with the phone costs you a turn, so make each one count.
 | Is input going through the ESP32 bridge? | `phoneuse bridge status` (address, phone, round trip). Setup is in the browser mirror's settings; docs/BRIDGE.md |
 | Drags or scrolls fall short | `phoneuse calibrate` (~13 s of hovering, nothing tapped): measures this phone's pointer speed for drags. Runs by itself the first time a phone's pointer is on; rerun after changing Tracking Speed |
 | Where is the pointer | `phoneuse where` |
-
-``docs/RECIPES.md` in the phoneuse repository` explains why each gesture works the way it does. Read
-it before inventing a new gesture with `phoneuse swipe`.
 
 ## Ending a session
 

@@ -22,12 +22,24 @@ Agent commands. Coordinates are fractions (0..1) of the screenshot, or phone
 points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
   phoneuse screenshot [PATH]    PNG of the phone screen, once it has stopped changing
   phoneuse tap X Y              tap
-  phoneuse longpress X Y [S]    press and hold (default 0.8 s)
-  phoneuse swipe X0 Y0 X1 Y1 [S]  drag from one point to another over S seconds
+  phoneuse gesture STEPS...     any one-finger touch, as steps: down X Y, move X Y [S],
+                                hold S, up. Long presses, swipes, press-and-drag, e.g.
+                                gesture down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up
+  phoneuse recipe NAME [VALUES] run a named gesture: back, switcher, control-center,
+                                notifications, dismiss, home, long-press X Y [S], and
+                                any saved ones ($1, $2... in a recipe take VALUES)
+  phoneuse recipe list          every recipe and its steps
+  phoneuse recipe save NAME STEPS... [-- WHAT IT DOES]
+                                keep a gesture that works under a name (~/.config/phoneuse/
+                                recipes.json); $1, $2 stand for values, $3=0.8 has a default
+  phoneuse recipe forget NAME   delete a saved recipe
+  phoneuse longpress X Y [S]    = gesture down X Y hold S up (default 0.8 s)
+  phoneuse swipe X0 Y0 X1 Y1 [S]  = gesture down X0 Y0 move X1 Y1 S up (default 0.3 s)
   phoneuse scroll up|down [N]   scroll the content by N half-screens (default 1)
   phoneuse scroll-by DY [X]     scroll exactly DY: a screen fraction, or phone points if above 1;
                                 positive shows what is below, negative what is above (X: column, default 0.5)
   phoneuse home | back | switcher | control-center | notifications | dismiss
+                                (the recipes of those names)
   phoneuse open APP             open an app by name (search, type, Enter)
   phoneuse type [--append] TEXT  type text (US layout); \\n presses Enter. Replaces what
                                the field holds (Cmd+A first) unless --append
@@ -275,7 +287,8 @@ NOTES = []  # remarks for the agent, printed (CLI) or returned (MCP) with the ac
 ACTION = ""  # what the agent is doing now, in a few words (the companion app's Live Activity)
 
 VERBS = {"open": "Opening", "open_app": "Opening", "tap-on": "Tapping", "tap_on": "Tapping", "tap": "Tapping",
-         "longpress": "Long-pressing", "long_press": "Long-pressing", "swipe": "Swiping", "scroll": "Scrolling",
+         "longpress": "Long-pressing", "long_press": "Long-pressing", "long-press": "Long-pressing",
+         "swipe": "Swiping", "gesture": "Touching", "scroll": "Scrolling",
          "scroll_by": "Scrolling", "type": "Typing", "type_text": "Typing", "key": "Pressing",
          "press_key": "Pressing", "back": "Going back", "home": "Going home", "switcher": "Opening the app switcher",
          "control-center": "Opening Control Center", "notifications": "Opening notifications",
@@ -294,8 +307,9 @@ def describe(cmd, what=""):
         return f"{verb} “{what[:40]}”"
     if cmd in ("key", "press_key") and what:
         return f"{verb} {what}"[:60]
-    if cmd == "navigate" and what:
-        return VERBS.get(what, f"Going to {what}")
+    if cmd in ("navigate", "recipe") and what:
+        name = what.split()[0]
+        return VERBS.get(name, name.replace("-", " ").capitalize())
     return verb
 
 
@@ -547,7 +561,7 @@ def key_combo(h, combo):
     h.cmd("key " + " ".join([key] + [mods[p] for p in parts[:-1]]))
 
 
-# ---------- gestures (recipes verified on iOS 26, see RECIPES.md) ----------
+# ---------- gestures and recipes (recipes.py; verified on iOS 26) ----------
 
 def home(h):
     if touch.LINK == "ble":
@@ -576,21 +590,57 @@ def _home_ble(h):
     time.sleep(0.6)
 
 
+def gesture_point(xs, ys):
+    """point(), for gesture steps: an error the caller reports instead of an exit."""
+    x, y = float(xs), float(ys)
+    if x > 1 or y > 1:
+        x, y = x / PT[0], y / PT[1]
+    if not (0 <= x <= 1 and 0 <= y <= 1):
+        raise touch.GestureError(f"position out of range: {xs} {ys}")
+    return x, y
+
+
+def parse_gesture(text):
+    return touch.parse_gesture(text, gesture_point)
+
+
+def first_down(steps):
+    return next(s[1:3] for s in steps if s[0] == "down")
+
+
+def gesture(h, text):
+    """Run gesture steps (touch.py): down X Y, move X Y [S], hold S, up."""
+    touch.gesture(h, parse_gesture(text))
+
+
+def recipe_steps(name, args=()):
+    """A recipe's parsed steps with its values filled in, or None for the Home key."""
+    from . import recipes
+    g, _, _ = recipes.get(name)
+    return None if g == "key" else parse_gesture(recipes.expand(g, [str(a) for a in args]))
+
+
+def recipe(h, name, args=()):
+    steps = recipe_steps(name, args)
+    if steps is None:
+        return home(h)
+    touch.gesture(h, steps)
+
+
 def back(h):
-    # finger sliding in from the very left edge (touch.press settles the pointer first)
-    touch.swipe(h, 0.0, 0.5, 0.8, 0.5, duration=0.35)
+    recipe(h, "back")
 
 
 def switcher(h):
-    touch.swipe(h, 0.5, 1.0, 0.5, 0.62, duration=0.45, hold_end=0.6)
+    recipe(h, "switcher")
 
 
 def control_center(h):
-    touch.swipe(h, 0.88, 0.0, 0.88, 0.45, duration=0.6)
+    recipe(h, "control-center")
 
 
 def notifications(h):
-    touch.swipe(h, 0.15, 0.0, 0.15, 0.7, duration=0.6)
+    recipe(h, "notifications")
 
 
 def read_notifications(h, pages=2):
@@ -615,7 +665,7 @@ def read_notifications(h, pages=2):
 
 def dismiss(h):
     """Close Control Center, Notification Center, the switcher, or go home from an app."""
-    touch.swipe(h, 0.5, 1.0, 0.5, 0.15, duration=0.12)
+    recipe(h, "dismiss")
 
 
 def scroll(h, direction, n=1.0):
@@ -1852,6 +1902,45 @@ def app_cmd(args):
           "The link works once, for 10 minutes.")
 
 
+GESTURE_HELP = """A gesture is steps for one finger:
+  down X Y      touch down at X Y (the pointer moves there and settles first)
+  move X Y [S]  slide to X Y over S seconds (default 0.3), finger still down
+  hold S        stay still for S seconds (finger down or up)
+  up            lift (a gesture ends lifted anyway)
+e.g. phoneuse gesture down 0.2 0.3 hold 1.0 move 0.7 0.6 1.2 hold 0.5 up"""
+
+
+def recipe_source(name):
+    from . import recipes
+    try:
+        return recipes.get(name)[0]
+    except touch.GestureError:
+        return ""
+
+
+def recipe_cmd(args):
+    """recipe list | recipe save NAME GESTURE... [-- ABOUT...] | recipe forget NAME"""
+    from . import recipes
+    if not args or args[0] == "list":
+        return print(recipes.listing())
+    try:
+        if args[0] == "save":
+            if len(args) < 3:
+                die('usage: phoneuse recipe save NAME STEPS... [-- WHAT IT DOES]')
+            rest = args[2:]
+            about = ""
+            if "--" in rest:
+                k = rest.index("--")
+                rest, about = rest[:k], " ".join(rest[k + 1:])
+            name = recipes.save(args[1], " ".join(rest), about)
+            return print(f"saved recipe {name}: run it with `phoneuse recipe {name}`")
+        if args[0] == "forget":
+            recipes.forget(args[1] if len(args) > 1 else "")
+            return print(f"forgot recipe {args[1]}")
+    except touch.GestureError as e:
+        die(str(e))
+
+
 def unlock_cmd():
     """Ask the owner to unlock the phone with the saved passcode. Waits for their
     answer (up to 2 minutes); the passcode never passes through here."""
@@ -1939,10 +2028,24 @@ def main():
         return screenshot(paths[0] if paths else runtime_path("phoneuse.png"))
     force = "--force" in args
     args = [a for a in args if a != "--force"]
+    if cmd == "recipe" and (not args or args[0] in ("list", "save", "forget")):
+        return recipe_cmd(args)
+    steps = None
+    try:
+        if cmd == "gesture":
+            steps = parse_gesture(" ".join(args))
+        elif cmd == "recipe":
+            steps = recipe_steps(args[0], args[1:])
+    except touch.GestureError as e:
+        die(f"{e}\n{GESTURE_HELP}")
     if cmd in ("tap", "longpress", "swipe") and not force and len(args) >= 2:
         why = moved_since_look(*point(*args[:2]))
         if why:
             die("Not tapped: " + why)
+    if steps and not force and (cmd == "gesture" or "$" in recipe_source(args[0])):
+        why = moved_since_look(*first_down(steps))
+        if why:
+            die("Not touched: " + why)
     h = hid()
     seq_before = frame_seq()
     if cmd == "tap":
@@ -1952,6 +2055,11 @@ def main():
     elif cmd == "swipe":
         x0, y0 = point(*args[0:2]); x1, y1 = point(*args[2:4])
         touch.swipe(h, x0, y0, x1, y1, duration=float(args[4]) if len(args) > 4 else 0.3)
+    elif cmd in ("gesture", "recipe"):
+        if steps is None:
+            home(h)
+        else:
+            touch.gesture(h, steps)
     elif cmd == "scroll":
         scroll(h, args[0] if args else "down", float(args[1]) if len(args) > 1 else 1.0)
     elif cmd == "scroll-by":

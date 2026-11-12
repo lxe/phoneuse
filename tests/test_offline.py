@@ -192,6 +192,50 @@ def test_drag_table_round_trip():
     assert ux > 0 and uy == 0 and touch.points_for(ux) <= 100.0
 
 
+def test_gesture_steps():
+    from phoneuse import touch
+    steps = touch.parse_gesture("down 0.2 0.3, hold 1; move 0.7 0.6 1.2 hold 0.5")
+    assert steps == [("down", 0.2, 0.3), ("hold", 1.0), ("move", 0.7, 0.6, 1.2), ("hold", 0.5), ("up",)]
+    assert touch.parse_gesture("down 0.5 0.5 move 0.5 0.1 up")[1] == ("move", 0.5, 0.1, touch.MOVE_SECONDS)
+    for bad in ("move 0.5 0.5", "down 0.5", "down 0.1 0.1 down 0.2 0.2", "up", "hold 1", "down 0.5 0.5 jiggle"):
+        try:
+            touch.parse_gesture(bad)
+        except touch.GestureError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+
+
+def test_gesture_still_press_is_one_timed_tap():
+    from phoneuse import touch
+    sent = []
+
+    class Hid:
+        def cmd(self, line):
+            sent.append(line)
+            return "ok"
+    touch.gesture(Hid(), touch.parse_gesture("down 0.5 0.4 hold 0.8 up"))
+    assert sent == ["a 0.50000 0.40000 0", "tap 0.50000 0.40000 0.800"]
+
+
+def test_recipe_values():
+    import tempfile
+    from phoneuse import recipes, touch
+    saved_file = recipes.FILE
+    recipes.FILE = os.path.join(tempfile.mkdtemp(), "recipes.json")
+    assert recipes.expand("down $1 $2 hold $3=0.8 up", ["0.3", "0.4"]) == "down 0.3 0.4 hold 0.8 up"
+    recipes.save("move-icon", "down $1 $2 hold 1 move $3 $4 1 up", "drag an icon")
+    assert recipes.get("move-icon")[0] == "down $1 $2 hold 1 move $3 $4 1 up"
+    for args in (["0.1"], ["0.1", "0.2", "0.3", "0.4", "0.5"], ["a", "b", "c", "d"]):
+        try:
+            recipes.expand(recipes.get("move-icon")[0], args)
+        except touch.GestureError:
+            continue
+        raise AssertionError(f"accepted {args}")
+    recipes.forget("move-icon")
+    assert "move-icon" not in recipes.every()
+    recipes.FILE = saved_file
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):

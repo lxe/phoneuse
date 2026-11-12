@@ -30,7 +30,7 @@ from .config import runtime_path
 # first (a module that does "from .x import y" copies y when it loads). The
 # tools' own names, arguments and descriptions are read once at start, so
 # changes to this file still need a restart.
-RELOAD_ORDER = ["config", "hidclient", "phones", "screen", "touch", "pointer", "calibrate", "unlock", "cli"]
+RELOAD_ORDER = ["config", "hidclient", "phones", "screen", "touch", "recipes", "pointer", "calibrate", "unlock", "cli"]
 _PKG = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -64,6 +64,8 @@ def tool(fn):
     def run(*a, **kw):
         _reload_changed()
         what = kw.get("name") or kw.get("target") or kw.get("combo") or kw.get("to") or ""
+        if fn.__name__ == "save_recipe":
+            what = ""
         cli.ACTION = cli.describe(fn.__name__, what)
         if fn.__name__ in ("look", "wait"):
             cli.agent_phase("reading")
@@ -85,7 +87,10 @@ server = MCPServer(
         "returns three frames from it (one image) plus the screen's text with positions, so you rarely need "
         "`look` on its own. If the last frame is still mid-transition, call wait. When a result says no "
         "change showed, look before repeating the action. Prefer tap_on for visible text; tap icons by "
-        "position. A result starting PAUSED means the user took over: stop until they resume you. "
+        "position. Any other touch (long press, swipe, press-and-drag, holding at an edge) is a gesture: "
+        "steps like \"down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up\". Named gestures are recipes "
+        "(back, switcher, control-center, notifications, dismiss, home, long-press, and saved ones); "
+        "when a gesture works for something you'll do again, save it with save_recipe. A result starting PAUSED means the user took over: stop until they resume you. "
         "On the lock screen, ask the user to unlock the phone; never type a passcode. "
         "When your task is done, call end_session to hand the phone back to the user. "
         "This is the user's personal phone: ask before sending, posting, buying, deleting, or changing "
@@ -269,15 +274,67 @@ def read_notifications() -> str:
 
 
 @tool
-def long_press(x: float, y: float, seconds: float = 0.8, look: Look = "strip", force: bool = False) -> list:
-    """Press and hold at (x, y). Refused like tap when the area moved since your last view."""
-    return _guard(x, y, force) or _act(lambda h: touch.long_press(h, *_pt(x, y), hold=seconds), look)
+def gesture(steps: str, look: Look = "strip", force: bool = False) -> list:
+    """Any one-finger touch, as steps (positions are screen fractions 0..1, or phone
+    points when a value is above 1):
+      down X Y      touch down (the pointer moves there and settles first)
+      move X Y [S]  slide to X Y over S seconds (default 0.3), finger still down
+      hold S        stay still S seconds (finger down or up)
+      up            lift (the gesture ends lifted anyway)
+    Long press: "down 0.5 0.4 hold 0.8 up". Swipe: "down 0.5 0.8 move 0.5 0.3 0.3 up".
+    Drag an icon on the home screen: "down 0.2 0.3 hold 1.0 move 0.7 0.6 1.0 hold 0.5 up".
+    Double tap: "down X Y up hold 0.1 down X Y up". A fast last move flings scrolling
+    content; end with a short slow move (e.g. 20 pt over 0.2 s) to stop exactly.
+    Refused like tap when the area under the first down moved since your last view."""
+    try:
+        parsed = cli.parse_gesture(steps)
+    except touch.GestureError as e:
+        return [f"error: {e}"]
+    return _guard(*first_xy(parsed), force) or _act(lambda h: touch.gesture(h, parsed), look)
+
+
+def first_xy(steps):
+    return cli.first_down(steps)
 
 
 @tool
-def swipe(x0: float, y0: float, x1: float, y1: float, seconds: float = 0.3, look: Look = "strip") -> list:
-    """Drag from (x0, y0) to (x1, y1) over `seconds` (sliders, custom gestures)."""
-    return _act(lambda h: touch.swipe(h, *_pt(x0, y0), *_pt(x1, y1), duration=seconds), look)
+def recipe(name: str, values: list[float] | None = None, look: Look = "strip", force: bool = False) -> list:
+    """Run a named gesture: back, switcher, control-center, notifications, dismiss,
+    home (the Home key), long-press (values: x, y[, seconds]), or one saved with
+    save_recipe. `recipes` lists them with their steps."""
+    from . import recipes as rec
+    try:
+        steps = cli.recipe_steps(name, values or [])
+        source = rec.get(name)[0]
+    except touch.GestureError as e:
+        return [f"error: {e}"]
+    if steps is None:
+        return _act(cli.home, look)
+    if "$" in source:
+        blocked = _guard(*first_xy(steps), force)
+        if blocked:
+            return blocked
+    return _act(lambda h: touch.gesture(h, steps), look)
+
+
+@tool
+def recipes() -> str:
+    """Every recipe: its name, steps and what it does. $1, $2... are the values it takes."""
+    from . import recipes as rec
+    return rec.listing()
+
+
+@tool
+def save_recipe(name: str, steps: str, about: str = "") -> str:
+    """Keep a gesture that worked under a name, so you (and later agents on this PC)
+    can run it with recipe(name). Use $1, $2... for values given when it runs, and
+    $3=0.8 for one with a default: "down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up".
+    `about` says what it does and where it works. A built-in's name replaces it here."""
+    from . import recipes as rec
+    try:
+        return f"saved recipe {rec.save(name, steps, about)}"
+    except touch.GestureError as e:
+        return f"error: {e}"
 
 
 @tool
@@ -346,16 +403,6 @@ def calibrate(look: Look = "strip") -> list:
 def open_app(name: str, look: Look = "strip") -> list:
     """Open an app by name (home, Spotlight, type, Enter). Apps reopen where they were left."""
     return _act(lambda h: cli.open_app(h, name), look)
-
-
-@tool
-def navigate(to: Literal["home", "back", "switcher", "control-center", "notifications", "dismiss"],
-             look: Look = "strip") -> list:
-    """System gestures: home screen, back (edge swipe), app switcher, Control Center,
-    Notification Center, or dismiss those overlays."""
-    fn = {"home": cli.home, "back": cli.back, "switcher": cli.switcher, "control-center": cli.control_center,
-          "notifications": cli.notifications, "dismiss": cli.dismiss}[to]
-    return _act(fn, look)
 
 
 def unlock(look: Look = "text") -> list:

@@ -1,4 +1,7 @@
-# Operating the iPhone with `phoneuse`
+# Gestures and recipes
+
+Every touch is a gesture: steps for one finger. Recipes are gestures with names.
+This file ships with the skill; SKILL.md has the short version.
 
 `phoneuse up` runs the AirPlay mirror and mouse control together; on the iPhone,
 start Control Center → Screen Mirroring → Phone Use on <this computer>. Agents then use the commands
@@ -8,26 +11,104 @@ after the last action, so it always shows the result.
 Coordinates are fractions of the screenshot (0 to 1), or iPhone points when any
 value is above 1. The screen is 402 × 874 points.
 
-## Loop for an agent
+## Gestures
 
-Take a screenshot, find the target, act, take a screenshot again. Taps land
-exactly where asked, so there is no need to aim twice. Swipes land within a few
-points, which is plenty for scrolling and edge gestures.
+```
+down X Y      touch down at (X, Y); the pointer moves there and settles 0.1-0.2 s first
+move X Y [S]  slide to (X, Y) over S seconds (default 0.3), finger still down
+hold S        stay still for S seconds (finger down or up)
+up            lift (a gesture ends lifted anyway)
+```
 
-## Recipes (verified on an iPhone 17 Pro, iOS 26, November 2026)
+CLI: `phoneuse gesture down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up`.
+MCP: `gesture(steps="down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up")`.
+
+- `down` lands exactly where asked. A `down`, `hold`, `up` with no `move` (a tap or
+  long press) goes as one timed press, so the hold is exact even over the bridge.
+- `move` is relative motion while the finger is down, sized from the phone's
+  calibration (`phoneuse calibrate`). On a calibrated iPhone 17 Pro (through the
+  bridge, November 2026) every drag ended where it was sent: the pointer sat on
+  the requested point, including a 0.6-screen diagonal and a drag with a 1.2 s
+  hold in the middle. An uncalibrated phone can fall short. Give long moves
+  0.6-1.5 s: slow moves are steadier.
+- Moves can chain with holds between them, for as long as you need, up to 30 s
+  per step: drag, pause over a target, drag on.
+- Moving fast in the last instant before `up` flings scrolling content. To stop
+  content exactly, end with a short slow move, or use `scroll` / `scroll-by`,
+  which do that for you.
+
+| To do this | Gesture |
+|---|---|
+| Tap | `down X Y up` (or `phoneuse tap X Y`) |
+| Long press (context menu) | `down X Y hold 0.8 up` |
+| Double tap (not yet verified) | `down X Y up hold 0.1 down X Y up` |
+| Swipe | `down 0.5 0.8 move 0.5 0.3 0.3 up` |
+| Slow drag (a slider) | `down X0 Y move X1 Y 0.8 hold 0.2 up` |
+| Press, then drag (move an icon, reorder a list) | `down X0 Y0 hold 1.0 move X1 Y1 1.0 hold 0.5 up` |
+| Drag an app out of an open folder | `down X0 Y0 hold 0.5 move 0.5 0.85 0.6 hold 1.2 move X1 Y1 0.6 hold 0.6 up` (below the folder, wait for it to close, then go to the slot) |
+| Drag to the next home screen page (not yet verified) | `down X Y hold 1.0 move 0.98 Y 0.8 hold 1.2 move 0.5 Y 0.6 hold 0.5 up` |
+
+### Moving icons on the home screen (measured, iPhone 17 Pro, iOS 26)
+
+The finger goes exactly where you send it; what decides the result is how iOS
+reads the drop point:
+
+- Holding an icon about 0.5 s opens its menu. Keep holding and start moving, and
+  the menu closes and the home screen enters edit mode. In edit mode a 0.4 s hold
+  is enough to pick an icon up.
+- **The icon goes into the slot under the finger when it lifts.** Slots are the
+  grid cells: on this phone four columns centred at x 0.154, 0.385, 0.615, 0.845
+  and rows at y 0.14, 0.255, 0.37, 0.485, 0.60, 0.715. A cell's edges are halfway
+  between centres, so y 0.20 already belongs to row 2.
+- **Ending close to another icon's centre makes a folder** (0.12 of the width
+  from it was close enough). To take another icon's place, end inside its cell
+  but off its centre, toward the top-left: 30-45 pt from the centre worked.
+- Icons shift while you drag, so the slot you aimed at may hold a different icon
+  by the time you lift. Moving an icon toward the end of the page, it lands after
+  the icon you dropped beside; moving it toward the start, it lands before.
+- An empty slot at the end of a page is always safe: nothing to merge with.
+- A folder with one app left dissolves, and the app takes the folder's place.
+- Leave edit mode with the checkmark at the top right (0.827, 0.037).
+
+## Recipes
+
+A recipe is a gesture with a name: `phoneuse recipe NAME [VALUES]` (MCP:
+`recipe(name, values)`). `$1`, `$2`... in its steps take the values in order, and
+`$3=0.8` gives one a default. `phoneuse recipe list` (MCP: `recipes`) shows every
+recipe with its steps.
+
+When a gesture works for something you will do again, save it:
+
+```
+phoneuse recipe save move-icon down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up -- drag a home screen icon from ($1,$2) to ($3,$4)
+phoneuse recipe move-icon 0.2 0.3 0.7 0.6
+```
+
+MCP: `save_recipe(name="move-icon", steps="down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up", about="...")`.
+Saved recipes live in `~/.config/phoneuse/recipes.json` on this PC, for every
+agent that uses it. A saved recipe with a built-in's name replaces that one here
+(to tune it for this phone); `phoneuse recipe forget NAME` brings the built-in back.
+
+### Built-in recipes (verified on an iPhone 17 Pro, iOS 26, November 2026)
+
+| Recipe | Steps | What it does |
+|---|---|---|
+| `back` | `down 0 0.5 move 0.8 0.5 0.35 up` | a finger sliding in from the very left edge (x = 0) |
+| `switcher` | `down 0.5 1 move 0.5 0.62 0.45 hold 0.6 up` | slow swipe up from the bottom, then hold |
+| `control-center` | `down 0.88 0 move 0.88 0.45 0.6 up` | slow (0.6 s) swipe down from the top-right corner |
+| `notifications` | `down 0.15 0 move 0.15 0.7 0.6 up` | slow swipe down from the top-left |
+| `dismiss` | `down 0.5 1 move 0.5 0.15 0.12 up` | fast, long swipe up from the very bottom; closes Control Center, Notification Center and the switcher |
+| `long-press` | `down $1 $2 hold $3=0.8 up` | press and hold; opens context menus |
+| `home` | (the Home key) | Cmd+H; works from any app |
+
+`phoneuse back`, `phoneuse switcher` and the others are the same recipes.
+
+## Other commands
 
 | Goal | Command | What it does |
 |---|---|---|
 | Pointer on | `phoneuse cursor on` | checks first and does nothing if the pointer is already on; otherwise holds the Siri key (consumer usage 0xCF), waits until Siri's orb shows at the bottom centre (about 1-1.4 s), plays "Turn on AssistiveTouch" on the PC speakers, and lets go. `phoneuse cursor` moves the pointer A, B, A, B and wants a pointer-sized change centred on each spot that repeats on both visits, so a moving wallpaper or video can't pass for the pointer |
 | Per-phone drag speed | `phoneuse calibrate` | hovers the pointer up from a fixed start with N relative reports of each size (28 down to 1 unit), finds it in the picture, and returns to the start by stepping beside it first (iOS ignores an absolute report that repeats the previous position after relative moves). The table goes to `~/.config/phoneuse/phones.json` under the mirroring phone's name; drags use it while that phone mirrors. An iPhone 15 Pro moved 0.08x-0.22x as far as the 17 Pro per report, and its drags fell far short until calibrated |
-| Tap | `phoneuse tap X Y` | press and release at the point |
-| Long press | `phoneuse longpress X Y [S]` | hold 0.8 s by default; opens context menus |
-| Home | `phoneuse home` | Cmd+H; works from any app |
-| Back | `phoneuse back` | swipe right starting at the very left edge (x = 0), like a finger sliding in |
-| App switcher | `phoneuse switcher` | slow swipe up from the bottom, then hold |
-| Control Center | `phoneuse control-center` | slow (0.6 s) swipe down from the top-right corner |
-| Notification Center | `phoneuse notifications` | slow swipe down from the top-left |
-| Close an overlay | `phoneuse dismiss` | fast, long swipe up from the very bottom; closes Control Center, Notification Center and the switcher |
 | Scroll | `phoneuse scroll down [N]` / `up` | drags the content by N half-screens, slowing down before the lift: no fling |
 | Scroll exactly | `phoneuse scroll-by DY [X]` | the same drag by DY (screen fraction, or points above 1); lands within ~5-8% |
 | Open an app | `phoneuse open Settings` | Cmd+H, Cmd+Space, type the name, Enter |
