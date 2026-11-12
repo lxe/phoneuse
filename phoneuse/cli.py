@@ -474,22 +474,6 @@ def acted(seq_before=None):
 REACT_WAIT = 3.0  # s: how long to wait for an action's first visible change before saying there was none
 
 
-def mirror_lag():
-    """How many seconds the mirror's picture trails the phone (frames.py measures it each
-    minute from the status-bar clock), or 0 when unknown or small."""
-    try:
-        line, _ = screen.frames_request("lag", timeout=1)
-        v = line.split("lag=")[1].split()[0]
-        return 0.0 if v == "-" else float(v)
-    except (OSError, IndexError, ValueError):
-        return 0.0
-
-
-def react_wait():
-    """REACT_WAIT, plus the picture's lag when it trails the phone by more than a second:
-    an action's change shows that much later, and "no change" would be wrong."""
-    lag = mirror_lag()
-    return REACT_WAIT + (lag if lag > 1 else 0.0)
 REACTIONS = os.path.join(RUNTIME_DIR, "phoneuse-reactions")
 SLOW = 0.8  # s: a median reaction above this means the mirror is slow (a recording, a busy phone)
 
@@ -498,7 +482,7 @@ def reaction_note(reacted):
     """After an action: note when the phone showed no change, and keep a running
     record of how long changes take to show, so agents hear when the mirror is slow."""
     if reacted == "-":
-        NOTES.append(f"note: no change showed within {react_wait():.0f} s of this action: it may have done "
+        NOTES.append(f"note: no change showed within {REACT_WAIT:.0f} s of this action: it may have done "
                      "nothing (a tap on nothing, a field already empty), or the phone is slow. Look again "
                      "before repeating it, so it doesn't happen twice")
         return
@@ -529,12 +513,12 @@ def settle():
     except (FileNotFoundError, ValueError):
         pass
     try:
-        # After an action: the first change's wait (react_wait), then stillness. Over Bluetooth LE
+        # After an action: the first change's wait (REACT_WAIT), then stillness. Over Bluetooth LE
         # (Windows; iPhone 14 Pro Max, iOS 26.5) the Home key's first change came up to 0.9 s after it
         # and a tap's hover highlight came before its page transition with a short gap, so LE waits
         # at least 1.5 s for the change and wants 0.25 s of stillness.
         le = touch.LINK == "ble"
-        wait = max(react_wait(), 1.5) if le else react_wait()
+        wait = max(REACT_WAIT, 1.5) if le else REACT_WAIT
         quiet = 0.25 if le else 0.1
         req = f"settle {since} {quiet} {wait:.1f}" if since is not None else "settle"
         line, _ = screen.frames_request(req, timeout=wait + 4)
@@ -1223,14 +1207,6 @@ def picture_note():
                 "(any action now is refused).")
         if note not in NOTES:
             NOTES.insert(0, note)
-    lag = mirror_lag()
-    if lag > 1.5 and not p.get("stale"):
-        note = (f"note: the mirror's picture trails the phone by about {lag:.0f} s (measured from the "
-                "status-bar clock), so every result shows the phone as it was then. Each action waits that "
-                "much longer for its change; don't repeat an action because it seems to have done nothing. "
-                "If it stays, tell the user (a screen recording on the iPhone slows mirroring)")
-        if note not in NOTES:
-            NOTES.append(note)
     if p.get("stale"):
         note = ("note: the mirror's picture isn't updating (last frame "
                 f"{p.get('frame_age')} s ago): the phone's screen is off or mirroring stalled; "

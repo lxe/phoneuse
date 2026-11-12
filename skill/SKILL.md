@@ -206,10 +206,6 @@ leftover; close it, or `phoneuse back` until you reach the app's main view.
 
 - A tap or swipe seems to miss: take a fresh screenshot first. The mirror trails
   the phone slightly, so an earlier screenshot may be stale.
-- A note says the picture trails the phone by N seconds: Phone Use measures it from
-  the status-bar clock, and each action already waits that much longer for its
-  change. Don't repeat an action that seems to have done nothing; if the lag stays,
-  tell the user (a screen recording on the iPhone slows mirroring).
 - You never need to locate the pointer to act: taps and drags start from exact
   positions. `phoneuse where` (a debugging aid) finds it only if Pointer Control's
   colour is Orange (Settings → Accessibility → Accessories → Pointer Control);

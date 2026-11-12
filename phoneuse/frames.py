@@ -14,9 +14,6 @@ request:
                the answer's reacted= says how long that change took ("-": none)
   react N [L]  wait up to L seconds (default 3) for the first change after N
   history T    the frames since epoch T, as JSON (for studying settle)
-  lag          "ok lag=S at=EPOCH" (or "lag=-"): how far the picture trails the phone,
-               measured once a minute from when the status-bar clock changes (the
-               smaller of the last two minutes, so a single late change doesn't count)
   shot         PNG of the current picture (2 px per phone point):
                "ok LENGTH\\n" + bytes
 """
@@ -34,26 +31,20 @@ DYNAMIC_AFTER = 1.0  # a region moving continuously this long (s) is video/anima
 AMBIENT_AFTER = 0.4  # after this long (s), only big motion keeps settle waiting
 BIG = 0.05  # a change of at least this share of the picture is big (a page, a scroll)
 SHOT_SIZE = (SCREEN_PT[0] * 2, SCREEN_PT[1] * 2)
-# The status-bar clock (top left, as fractions of the picture): it changes at each minute
-# boundary, so the time its change arrives after the boundary is the picture's lag.
-CLOCK = (0.015, 0.05, 0.05, 0.30)  # top, bottom, left, right
-CLOCK_WINDOW = 30.0  # s after a boundary a clock change still counts as that minute's
 
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), "frames:", *a, flush=True)
 
 
-def luma_parts(y, w, h):
+def luma_thumb(y, w):
     """From a frame's luma plane (rows of at least w pixels): the change thumbnail (every
-    16th pixel) and the status-bar clock's pixels (every 2nd)."""
-    t, b, l, r = CLOCK
-    return y[::16, :w:16].copy(), y[int(h * t):int(h * b):2, int(w * l):int(w * r):2].copy()
+    16th pixel)."""
+    return y[::16, :w:16].copy()
 
 
 class Frames:
-    """Change counting, settling and the lag, fed one luma thumbnail (and the clock's
-    pixels) per decoded frame by a source (GstSource on Linux and macOS, AvSource on
+    """Change counting and settling, fed one luma thumbnail per decoded frame by a source (GstSource on Linux and macOS, AvSource on
     Windows), which also makes screenshots."""
 
     def __init__(self):
@@ -71,21 +62,17 @@ class Frames:
         self.ambient = False
         self.reacted = None
         self.last_move = self.moving_since = None
-        self.clock = None  # the clock's pixels in the last frame
-        self.clock_moved_at = 0.0  # when they last changed
-        self.lag, self.lag_at, self.lag_minute = None, 0.0, 0  # the last lag measurement
-        self.lags = [0.0]  # recent minutes' measurements: lag reports the smaller of the last two
 
-    def feed(self, thumb, clock=None):
-        """A decoded frame's luma thumbnail (every 16th pixel) and clock pixels, or None
-        when it couldn't be read (counts as a change)."""
-        if thumb is None or self.changed(thumb, clock):
+    def feed(self, thumb):
+        """A decoded frame's luma thumbnail (every 16th pixel), or None when it couldn't
+        be read (counts as a change)."""
+        if thumb is None or self.changed(thumb):
             with self.cv:
                 self.seq += 1
                 self.frame_at = time.time()
                 self.cv.notify_all()
 
-    def changed(self, thumb, clock=None):
+    def changed(self, thumb):
         """Did this frame change the picture meaningfully? Compares a coarse luma
         thumbnail (every 16th pixel) with the one at the last change: more than
         0.4% of its cells must differ. The pointer moving, a blinking caret or a
@@ -104,8 +91,6 @@ class Frames:
         # (a playing video, an animated banner) is ignored: page transitions and
         # scroll flings finish well within that, video never does.
         moved = np.abs(thumb - prev) > 12
-        if clock is not None:
-            self._clock(clock.astype(np.int16), now, float(moved.mean()))
         paused = now - self.last_move > 0.6  # pixels in a video pause now and then
         self.moving_since[moved & paused] = now
         self.last_move[moved] = now
@@ -131,35 +116,6 @@ class Frames:
                 self.big_at = now
             return True
         return False
-
-    def _clock(self, clock, now, moved):
-        """Measure the lag: when the clock's first change after a minute boundary arrives.
-        That first change settles the minute, measured or not: it counts only on a frame
-        where little else changed (a page sliding in changes the clock area too), when the
-        clock area was still for 5 s before the boundary, and when it looks like new digits
-        rather than the whole status bar being redrawn. Counting a later change instead
-        reported 3 s of lag that wasn't there: X redrew its status bar ~3 s after the minute
-        had flipped during an app switch, while the picture was 0.2 s behind (2026-11-10)."""
-        prev, self.clock = self.clock, clock
-        if prev is None or prev.shape != clock.shape:
-            return
-        changed = float((np.abs(clock - prev) > 40).mean())
-        if changed < 0.01:
-            return
-        minute = round(now / 60) * 60 if now % 60 > 58 else int(now // 60) * 60  # a phone clock a bit ahead flips early
-        quiet_before = self.clock_moved_at < minute - 5
-        self.clock_moved_at = now
-        if now - minute >= CLOCK_WINDOW or minute == self.lag_minute:
-            return
-        self.lag_minute = minute  # later changes this minute are redraws, not the time
-        # new digits change a few percent of the area (measured 2%); a redrawn status bar most of it
-        if not quiet_before or moved >= 0.02 or changed > 0.15:
-            return
-        self.lags = (self.lags + [max(0.0, now - minute)])[-2:]
-        # one late flip can be a fluke; a lag that holds shows in two minutes in a row
-        self.lag, self.lag_at = min(self.lags), now
-        if self.lag > 1.5:
-            log(f"the picture is {self.lag:.1f} s behind the phone")
 
     def settle(self, since=None, change=0.6, quiet=0.1, limit=3.0):
         """Wait until the picture is still. Measured (history, PHONEUSE_STEPLOG):
@@ -230,9 +186,6 @@ class Frames:
                     import json
                     t0 = float(arg or 0)
                     conn.sendall((json.dumps([h for h in self.history if h[0] >= t0]) + "\n").encode())
-                elif cmd == "lag":
-                    fresh = self.lag is not None and time.time() - self.lag_at < 150 and self.source.live()
-                    conn.sendall((f"ok lag={self.lag:.2f} at={self.lag_at:.0f}\n" if fresh else "ok lag=-\n").encode())
                 elif cmd == "shot":
                     png = self.source.screenshot()
                     conn.sendall(b"err not mirroring\n" if png is None else f"ok {len(png)}\n".encode() + png)
@@ -290,7 +243,7 @@ class AvSource:
             self.last = f
             plane = f.planes[0]
             y = np.frombuffer(plane, np.uint8).reshape(plane.height, plane.line_size)
-            self.frames.feed(*luma_parts(y, plane.width, plane.height))
+            self.frames.feed(luma_thumb(y, plane.width))
 
     def _watch(self):
         # Forget the picture when mirroring ends (the hub knows, and debounces it), or
@@ -370,24 +323,23 @@ class GstSource:
             self.vinfo = self.GstVideo.VideoInfo.new_from_caps(self.caps)
             self.shot_src.set_property("caps", self.caps)
         self.last = sample.get_buffer()
-        thumb, clock = self._parts(self.last)
-        self.frames.feed(thumb, clock)
+        self.frames.feed(self._thumb(self.last))
         return Gst.FlowReturn.OK
 
-    def _parts(self, buf):
+    def _thumb(self, buf):
         try:
             ok, m = buf.map(self.Gst.MapFlags.READ)
             if not ok:
-                return None, None
+                return None
             try:
                 vi = self.vinfo
                 stride, h, w = vi.stride[0], vi.height, vi.width
                 y = np.frombuffer(m.data, np.uint8, count=stride * h).reshape(h, stride)
-                return luma_parts(y, w, h)
+                return luma_thumb(y, w)
             finally:
                 buf.unmap(m)
         except Exception:
-            return None, None
+            return None
 
     def _stay_joined(self):
         # Keep subscribed to the hub; a first join (or one after the hub restarts)

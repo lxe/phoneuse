@@ -159,7 +159,6 @@ class Mirror:
         self.bluetooth = True  # the phone's Bluetooth link (mouse and keyboard)
         self.last_frame_at = 0.0  # when the phone's picture last changed
         self.stale = False  # the picture stopped following the phone (see check_stale)
-        self.lag = 0  # whole seconds the picture trails the phone, when over LAG_SHOW (see read_lag)
         self.last_input_at = 0.0  # when the page or an agent last sent input
         self.awake = os.path.exists(AWAKE_FILE)  # keep the screen awake (see keep_awake)
         self.screen_dark = False  # a keep-awake nudge drew no frame: the screen is off
@@ -326,24 +325,6 @@ class Mirror:
             self.broadcast_state()
         return stale
 
-    LAG_SHOW = 2.0  # s: a picture trailing the phone by more than this is marked on the pages
-
-    def read_lag(self):
-        """The picture's lag as the frames service last measured it (once a minute), in
-        whole seconds when it is big enough to mislead, else 0. Blocks: run it off the loop."""
-        try:
-            line, _ = screen.frames_request("lag", timeout=1)
-            v = line.split("lag=")[1].split()[0]
-            return 0 if v == "-" or float(v) <= self.LAG_SHOW else round(float(v))
-        except (OSError, IndexError, ValueError):
-            return 0
-
-    def set_lag(self, lag):
-        if lag != self.lag:
-            self.lag = lag
-            log(f"the picture trails the phone by {lag} s" if lag else "the picture keeps up with the phone again")
-            self.broadcast_state()
-
     def broadcast_state(self):
         for tab in list(self.tabs):
             tab.state()
@@ -430,7 +411,7 @@ class Tab:
         self.told_agent = self.mirror.agent()
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
                           "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
-                          "awake": self.mirror.awake, "stale": self.mirror.stale, "lag": self.mirror.lag,
+                          "awake": self.mirror.awake, "stale": self.mirror.stale,
                           "name": NAME, "screen": SCREEN_PT,
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
@@ -899,7 +880,7 @@ def app(mirror):
     a.router.add_post("/api/agent/act", agent_act)
     a.router.add_post("/api/agent/phase", agent_phase)
     def picture_state():
-        return {"live": mirror.live(), "stale": mirror.stale, "lag": mirror.lag, "paused": mirror.taken_over,
+        return {"live": mirror.live(), "stale": mirror.stale, "paused": mirror.taken_over,
                 "frame_age": round(time.time() - mirror.last_frame_at, 1) if mirror.last_frame_at else None}
     a.router.add_get("/api/picture", lambda _r: web.json_response(picture_state()))
     a.router.add_post("/api/agent/takeover", agent_takeover)
@@ -1002,14 +983,10 @@ def main():
         asyncio.ensure_future(mirror.sessions.keep_gate())
 
         async def stale_loop():
-            n = 0
             while True:
                 await asyncio.sleep(0.5)
                 mirror.session.tick()  # the session running out, a countdown ending
                 mirror.check_stale()
-                n += 1
-                if n % 10 == 0:  # every 5 s; it changes at most once a minute
-                    mirror.set_lag(await asyncio.get_running_loop().run_in_executor(None, mirror.read_lag))
         asyncio.ensure_future(stale_loop())
         try:  # the companion app's API on the local network (companion.py)
             from .companion import Companion

@@ -38,7 +38,6 @@ struct UnlockRequest: Decodable, Equatable {
 struct Picture: Decodable {
     var live: Bool?
     var stale: Bool?
-    var lag: Double?
     var paused: Bool?
 }
 

@@ -19,8 +19,6 @@
   #note[hidden] { display: none; }
   #screen.stale canvas { filter: grayscale(.8) brightness(.45); }
   #screen.stale #note { color: #fff; }
-  #screen.lagging canvas { filter: brightness(.5); }
-  #screen.lagging #note { color: #fff; }
   .glass { background: rgba(28, 28, 32, .72); -webkit-backdrop-filter: blur(28px) saturate(170%);
            backdrop-filter: blur(28px) saturate(170%); border: 1px solid rgba(255, 255, 255, .09);
            box-shadow: 0 18px 50px rgba(0, 0, 0, .45); color: #f5f5f7; }
@@ -264,9 +262,6 @@ function updateNote() {
                       + "Wake the phone, or reconnect <b>Screen Mirroring</b>.");
     return showNote("The iPhone's screen is off or locked.<br>Wake it to see it here.");
   }
-  if (connected && state.live && state.lag)  // the picture is live, but behind the phone
-    return showNote(`<b>This picture is about ${state.lag} s behind the iPhone.</b><br>`
-                    + "A screen recording on the iPhone slows mirroring.<br>Stop it, or reconnect <b>Screen Mirroring</b>.");
   if (hasPicture || (connected && state.live)) { troubleSince = 0; return showNote(""); }
   if (!troubleSince) { troubleSince = performance.now(); setTimeout(updateNote, 5100); }
   if (performance.now() - troubleSince < 5000) return showNote("");
@@ -403,7 +398,6 @@ function connect() {
     if (!state.live) { if (wasLive) playing = false; blank(); }
     layout(); updateNote(); showAgent();
     scr.classList.toggle("stale", !!state.stale);
-  scr.classList.toggle("lagging", !state.stale && !!state.lag);
     awakeSw.setAttribute("aria-checked", !!state.awake);
     document.getElementById("btDown").hidden = state.bluetooth !== false;
   };

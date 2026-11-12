@@ -54,7 +54,4 @@ def hero(s, name):
     if pic.get("stale"):
         return _step("stale", "The picture is old", "The iPhone's screen is off, or mirroring stalled.",
                      "open_phone")
-    if pic.get("lag"):
-        return _step("lag", f"The picture is {pic['lag']} s behind", "A screen recording on the iPhone slows "
-                     "mirroring.", "open_phone", good=True)
     return _step("mirroring", st.get("phone") or "iPhone", "Mirroring to this PC", "open_phone", good=True)

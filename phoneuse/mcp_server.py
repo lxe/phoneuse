@@ -135,15 +135,14 @@ def _screen(look):
 def _strip(since=None):
     """Three frames from the phone's reaction on, side by side in one image (~625
     tokens), with the text of the last one. After an action (`since`, the frame
-    count before it), first wait up to cli.react_wait() s for its first visible
+    count before it), first wait up to cli.REACT_WAIT s for its first visible
     change, so a slow phone's result isn't mistaken for "nothing happened"; then
     no waiting for the screen to settle: the agent sees what moved itself."""
     import time
     from phoneuse import screen
     if since is not None:
         try:
-            wait = cli.react_wait()  # longer while the picture trails the phone
-            line, _ = screen.frames_request(f"react {since} {wait:.1f}", timeout=wait + 2)
+            line, _ = screen.frames_request(f"react {since} {cli.REACT_WAIT}", timeout=cli.REACT_WAIT + 2)
             cli.reaction_note(line.split("reacted=")[1].split()[0])
         except (OSError, IndexError):
             pass
