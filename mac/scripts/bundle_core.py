@@ -51,10 +51,89 @@ PLUGINS = ["coreelements", "app", "udp", "rtp", "rtpmanager", "videoparsersbad",
 TYPELIBS = ["GLib-2.0", "GObject-2.0", "Gio-2.0", "GModule-2.0", "GioUnix-2.0", "GLibUnix-2.0", "Gst-1.0",
             "GstBase-1.0", "GstApp-1.0", "GstVideo-1.0", "GstAudio-1.0", "GstRtp-1.0", "GstPbutils-1.0",
             "GstTag-1.0", "GstNet-1.0"]
+# What the app never loads, by path under OUT_DIR. Python's headers, pkg-config, man pages and build
+# config; the libpython dylib (python3.15 links it statically and nothing else references it); the GUI,
+# installer and documentation halves of the stdlib; pip; the .dSYM symbols PyObjC ships beside every
+# extension (PyObjCTest is nothing else); numpy's tests, type stubs and build headers, but not its f2py,
+# which numpy.__all__ names and `from numpy import *` would then fail on. Globs, so a file
+# python-build-standalone stops shipping is a no-op rather than a build failure.
+TCL_VERSION = "9"
+PRUNE = [
+    "python/include", "python/share", "python/lib/pkgconfig", f"python/lib/libpython{PY_VERSION}.dylib",
+    f"python/lib/python{PY_VERSION}/config-{PY_VERSION}-darwin",
+    f"python/lib/python{PY_VERSION}/idlelib", f"python/lib/python{PY_VERSION}/ensurepip",
+    f"python/lib/python{PY_VERSION}/turtledemo", f"python/lib/python{PY_VERSION}/pydoc_data",
+    f"python/lib/python{PY_VERSION}/tkinter",
+    f"python/lib/python{PY_VERSION}/lib-dynload/_tkinter*.so",
+    f"python/lib/tcl{TCL_VERSION}.0", f"python/lib/tcl{TCL_VERSION}",
+    f"python/lib/tk{TCL_VERSION}.0", "python/lib/itcl*", "python/lib/thread*",
+    f"python/lib/libtcl{TCL_VERSION}*.dylib", f"python/lib/libtk{TCL_VERSION}*.dylib",
+    "python/bin/python3*-config", "python/bin/pip*", "python/bin/idle3*", "python/bin/pydoc3*",
+    f"python/lib/python{PY_VERSION}/site-packages/pip",
+    f"python/lib/python{PY_VERSION}/site-packages/pip-*.dist-info",
+    f"python/lib/python{PY_VERSION}/site-packages/PyObjCTest",
+    f"python/lib/python{PY_VERSION}/site-packages/**/*.dSYM",
+    f"python/lib/python{PY_VERSION}/site-packages/numpy/**/tests",
+    f"python/lib/python{PY_VERSION}/site-packages/numpy/**/*.pyi",
+    f"python/lib/python{PY_VERSION}/site-packages/numpy/**/include",
+]
 
 
 def run(*cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
+
+
+def tree_size(root):
+    """The apparent bytes under root, without following symlinks."""
+    return sum(os.lstat(os.path.join(d, f)).st_size for d, _dirs, files in os.walk(root) for f in files)
+
+
+def prune(out):
+    """Deletes PRUNE from out, returning the bytes freed."""
+    freed = 0
+    bundle = os.path.realpath(out)
+    for pattern in PRUNE:
+        for path in glob.glob(os.path.join(glob.escape(out), pattern), recursive=True):
+            if not os.path.lexists(path):
+                continue  # already gone through another pattern, or not shipped
+            try:
+                if os.path.islink(path):  # before isdir: a link to a directory is not one
+                    freed += os.lstat(path).st_size
+                    os.remove(path)
+                    continue
+                if not os.path.realpath(path).startswith(bundle + os.sep):
+                    continue  # a symlinked parent points outside the bundle
+                if os.path.isdir(path):
+                    freed += tree_size(path)
+                    shutil.rmtree(path)
+                else:
+                    freed += os.path.getsize(path)
+                    os.remove(path)
+            except OSError as e:
+                sys.exit(f"couldn't prune {path}: {e}")
+    return freed
+
+
+def check_bundle(out):
+    """What must fail a build: Homebrew paths, links to files prune() removed, and libraries that need
+    a newer macOS than the app's minimum."""
+    shipped = {f for _root, _dirs, files in os.walk(out) for f in files}
+    bad, new = [], []
+    for root, _dirs, files in os.walk(out):
+        for f in files:
+            p = os.path.join(root, f)
+            if os.path.islink(p) or not os.path.isfile(p) or not is_macho(p):
+                continue
+            for r in deps(p):
+                if r.startswith((BREW, "@@HOMEBREW")):
+                    bad.append(f"{p}: {r}")
+                elif r.startswith(("@rpath/", "@loader_path/", "@executable_path/")) \
+                        and os.path.basename(r) not in shipped:
+                    bad.append(f"{p}: {r} (not in the bundle)")
+            v = minos(p)
+            if v and version_key(v) > version_key(MIN_MACOS):
+                new.append(f"{os.path.relpath(p, out)}: macOS {v}")
+    return bad, new
 
 
 def fetch(url):
@@ -68,9 +147,12 @@ def fetch(url):
 
 
 def deps(path):
-    """The libraries a Mach-O file links, as otool prints them."""
+    """The libraries a Mach-O file links, as otool prints them, without its own install name."""
     out = subprocess.run(["otool", "-L", path], capture_output=True, text=True).stdout.splitlines()[1:]
-    return [line.strip().split(" (")[0] for line in out if line.strip()]
+    libs = [line.strip().split(" (")[0] for line in out if line.strip()]
+    own = {line.strip() for line in subprocess.run(["otool", "-D", path], capture_output=True, text=True)
+           .stdout.splitlines()[1:] if line.strip()}
+    return [lib for lib in libs if lib not in own]
 
 
 def minos(path):
@@ -303,20 +385,13 @@ def main():
     for f in ("phoneuse",):
         shutil.copy2(os.path.join(REPO, "bin", f), os.path.join(out, "bin", f))
 
-    # Nothing may still point into Homebrew, or need a macOS newer than the app's minimum
-    bad, new = [], []
-    for root, _dirs, files in os.walk(out):
-        for f in files:
-            p = os.path.join(root, f)
-            if os.path.islink(p) or not os.path.isfile(p) or not is_macho(p):
-                continue
-            bad += [f"{p}: {r}" for r in deps(p) if r.startswith((BREW, "@@HOMEBREW"))]
-            v = minos(p)
-            if v and version_key(v) > version_key(MIN_MACOS):
-                new.append(f"{os.path.relpath(p, out)}: macOS {v}")
+    freed = prune(out)
+    print(f"pruned {freed / 2**20:.0f} MiB the app never loads")
+
+    bad, new = check_bundle(out)
     if bad:
         print("\n".join(bad[:20]))
-        sys.exit("libraries still point into Homebrew")
+        sys.exit("libraries point into Homebrew, or at files the bundle doesn't have (did prune() take one?)")
     if new:
         print("\n".join(new[:40]))
         sys.exit(f"these need a macOS newer than {MIN_MACOS}, the app's minimum (UxPlay: rebuild it with "
