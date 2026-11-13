@@ -1,5 +1,6 @@
 """Film of a gesture: frames of the phone taken while the gesture runs, in one image.
 
+`phoneuse gesture` and `phoneuse recipe` save it and print its path.
 touch.gesture calls Film.mark at the end of each step (the end of a move, the end
 of a hold with the finger down, just before a long press lifts) and once the
 finger is up, for frames 0.3 and 0.8 s after the lift. A thread takes each frame

@@ -10,8 +10,7 @@ The Linux app already splits into two parts, and the Mac app keeps that split:
 
 - **The core** is the Python package `phoneuse`, run as one supervisor (`phoneuse serve`). It owns everything
   about the phone: the AirPlay receiver (UxPlay), the video hub, the frames service, the browser mirror and its
-  local API on port 8777, the companion API on 8778, the HID daemon in bridge-only mode, the CLI and the MCP
-  server. It is the same code on every platform; only a few calls into the system differ (below).
+  local API on port 8777, the companion API on 8778, the HID daemon in bridge-only mode, and the CLI. It is the same code on every platform; only a few calls into the system differ (below).
 - **The shell** is a native app that starts and stops the core and shows its state. It holds no phone logic: it
   reads and changes everything through the browser mirror's local API, as the GTK app does. On Linux the shell
   is GTK and libadwaita; on the Mac it is SwiftUI; on Windows it will be WinUI.
@@ -90,8 +89,8 @@ with an IOKit power assertion held by the shell.
 **OCR**: macOS has Apple's Vision text recognition built in. A small Swift helper that answers the vision
 socket's protocol replaces RapidOCR on the Mac, with no model download and faster than the CPU model.
 
-**Connect Claude Code** stays in the core (claude_setup.py). On the Mac, the MCP command and the `phoneuse`
-wrapper point into the app bundle (`Phone Use.app/Contents/Resources/core/bin/…`).
+**Connect Claude Code** stays in the core (claude_setup.py). On the Mac, the skill link and the `phoneuse`
+wrapper point into the app bundle (`Phone Use.app/Contents/Resources/core/…`).
 
 **Runtime directory**: there's no `XDG_RUNTIME_DIR`, so sockets go to a per-user directory under
 `$TMPDIR` instead of `/tmp`.

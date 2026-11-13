@@ -267,7 +267,7 @@ class Mirror:
         return self.session.current_phase()
 
     def agent_acts(self, action="", phase="acting"):
-        """Called before every agent action (CLI or MCP), once access allows it. False
+        """Called before every agent action (the CLI), once access allows it. False
         while the user has taken over: the agent must stop."""
         if not self.session.act(action, phase):
             return False
@@ -809,7 +809,7 @@ def app(mirror):
         return sock
 
     async def agent_act(req):
-        # The CLI and MCP server call this before every agent action.
+        # The CLI calls this before every agent action.
         try:
             action = str((await req.json()).get("action", ""))[:80]
         except ValueError:
@@ -828,7 +828,7 @@ def app(mirror):
                                  status=409)
 
     async def agent_phase(req):
-        # The CLI and MCP server: "reading" while the agent reads the screen, "thinking" once an
+        # The CLI: "reading" while the agent reads the screen, "thinking" once an
         # action returns (its model works out the next step).
         try:
             phase = (await req.json()).get("phase")
@@ -979,6 +979,9 @@ def main():
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", PORT).start()
         log(f"browser mirror on http://localhost:{PORT}")
+        from . import claude_setup
+        if claude_setup.refresh():  # an older Claude Code setup (a copied skill, the old MCP server)
+            log("Claude Code: the skill and the phoneuse command now point at this copy")
         asyncio.ensure_future(mirror.keep_awake())
         asyncio.ensure_future(mirror.sessions.keep_gate())
 

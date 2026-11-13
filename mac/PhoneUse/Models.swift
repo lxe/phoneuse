@@ -73,9 +73,8 @@ struct Passcode: Decodable { var saved: Bool?; var enabled: Bool? }
 struct Claude: Decodable {
     var claude: Bool?
     var skill: Bool?
-    var mcp: Bool?
     var command: Bool?
-    var connected: Bool { (skill ?? false) && (mcp ?? false) && (command ?? false) }
+    var connected: Bool { (skill ?? false) && (command ?? false) }
 }
 
 /// The next thing to do, or the iPhone (phoneuse/overview.py).

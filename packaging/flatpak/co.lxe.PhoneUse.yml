@@ -18,7 +18,7 @@ finish-args:
   - --allow=bluetooth                               # this PC's Bluetooth: L2CAP sockets to the iPhone
   - --system-talk-name=org.fedoraproject.FirewallD1 # "Allow on this network" (asks for the password)
   - --talk-name=org.freedesktop.Flatpak             # the same for ufw (pkexec on the host)
-  - --filesystem=~/.claude:create                   # connect Claude Code: the skill and the MCP server
+  - --filesystem=~/.claude:create                   # connect Claude Code: the skill
   - --filesystem=~/.claude.json
   - --filesystem=~/.local/bin:create                # the `phoneuse` command for agents
   - --env=PYTHONPATH=/app/lib/phoneuse
@@ -106,7 +106,6 @@ modules:
       - cp -r phoneuse /app/lib/phoneuse/
       - rm -rf /app/lib/phoneuse/phoneuse/__pycache__
       - install -m755 packaging/flatpak/phoneuse.sh /app/bin/phoneuse
-      - install -m755 packaging/flatpak/phoneuse-mcp.sh /app/bin/phoneuse-mcp
       - install -m755 packaging/flatpak/phoneuse-app.sh /app/bin/phoneuse-app
       - mkdir -p /app/share/phoneuse && cp -r skill /app/share/phoneuse/skill
       - install -Dm644 packaging/flatpak/co.lxe.PhoneUse.desktop /app/share/applications/co.lxe.PhoneUse.desktop
@@ -120,4 +119,4 @@ modules:
     sources:
       - type: dir
         path: ../..
-        skip: [build-dir, .flatpak-builder, .venv-vision, .venv-mcp, bridge/build, ios, touchlab]
+        skip: [build-dir, .flatpak-builder, .venv-vision, bridge/build, ios, touchlab]

@@ -38,19 +38,12 @@ the full list.
 5. HID service not active: on Linux `phoneuse install` (needs sudo) sets it up; on
    Windows `phoneuse up` starts it (it keeps running after `up` stops).
 
-## MCP or CLI
+## Notes in results
 
-If the phoneuse MCP tools are available (`look`, `tap`, `tap_on`, `gesture`, `recipe`, `scroll`, `scroll_by`,
-`type_text`, `open_app`, `wait`, `read_notifications`, ...), use them.
-Every action first waits (up to 3 s) for the phone's first visible change, then
-returns frames from it (0.1, 0.4 and 0.8 s; frames that didn't change are
-dropped, so a still screen is one frame) plus the last frame as text lines with
-exact positions. You see motion yourself: a page still sliding in, a spinner, a
-video. If the last frame isn't final yet, call `wait(seconds)` with a duration you
-choose, and look again. When a result says no change showed, the action may have
-done nothing or the phone is slow: look before repeating it, never just repeat.
-When it says the phone is slow, leave time between actions. Otherwise use the
-`phoneuse` CLI below; the rules are the same.
+Every action waits (up to 3 s) for the phone's first visible change and prints
+`ok`, then any notes. When a note says no change showed, the action may have done
+nothing or the phone is slow: look before repeating it, never just repeat. When a
+note says the phone is slow, leave time between actions.
 
 ## The loop
 
@@ -117,8 +110,8 @@ Every round trip with the phone costs you a turn, so make each one count.
   Reels, TikTok or Shorts to the next item.
 - **Taps by position are checked**: `tap` and `gesture` (at its first `down`) refuse when the
   area around the point changed since your last look (screenshot, `--text`, or an
-  MCP action's frames), because the position then belongs to something else. Look
-  again and tap. `--force` (MCP: `force=True`) taps anyway, for fixed controls like
+  gesture's film), because the position then belongs to something else. Look
+  again and tap. `--force` taps anyway, for fixed controls like
   a tab bar right after a page change.
 - **Repeat cheap actions in one call** when you know the layout, e.g. three
   flicks with a text read after each:
@@ -142,14 +135,12 @@ phoneuse gesture down 0.2 0.3 hold 1.0 move 0.7 0.6 1.0 hold 0.5 up # press, the
 phoneuse gesture down 0.5 0.4 up hold 0.1 down 0.5 0.4 up           # double tap
 ```
 
-MCP: `gesture(steps="down 0.5 0.4 hold 0.8 up")`.
-
 **Every gesture comes back as a film**: one image with a frame at the end of each
 move, at the end of each hold while the finger is down, just before a long press
 lifts, and 0.3 and 0.8 s after the lift (frames that didn't change are merged).
 Each frame is labelled with its step, and a ring marks the finger (orange with a
-dot while down, white once up). MCP returns it with the result; the CLI saves it
-and prints `film: PATH`, so Read that file when the gesture's middle matters. Use
+dot while down, white once up). The command saves it and prints `film: PATH`
+(`--film PATH` picks the file): Read it when the gesture's middle matters. Use
 it to see what the phone did before the finger lifted (icons shifting aside, a
 folder forming, a menu opening) and to fix the next gesture from that.
 
@@ -159,9 +150,9 @@ screen edge to change pages. Slow moves (0.6-1.5 s across most of the screen) ar
 the steadiest. A fast move right before `up` flings scrolling content; for content,
 use `scroll` or `scroll-by`, which stop exactly.
 
-**Recipes** are gestures with names: `phoneuse recipe back` (MCP: `recipe("back")`).
+**Recipes** are gestures with names: `phoneuse recipe back`.
 Built in: `back`, `switcher`, `control-center`, `notifications`, `dismiss`, `home`
-(the Home key) and `long-press X Y [S]`. `phoneuse recipe list` (MCP: `recipes`)
+(the Home key) and `long-press X Y [S]`. `phoneuse recipe list`
 shows each one's steps. When a gesture works for something you'll do again, save it
 for this and later sessions, with `$1`, `$2`... for values given when it runs:
 
@@ -170,7 +161,7 @@ phoneuse recipe save move-icon down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up --
 phoneuse recipe move-icon 0.2 0.3 0.7 0.6
 ```
 
-MCP: `save_recipe(name, steps, about)`. [RECIPES.md](RECIPES.md), next to this file,
+[RECIPES.md](RECIPES.md), next to this file,
 has the gesture table and how each recipe was measured; read it before a gesture
 you haven't done before.
 
@@ -181,7 +172,7 @@ you haven't done before.
 | Open an app | `phoneuse open Settings` (Cmd+H, Cmd+Space, type the name, Enter) |
 | Tap | `phoneuse tap X Y` |
 | Scroll | `phoneuse scroll down [N]` · `phoneuse scroll up [N]` (N half-screens; stops where the drag ends, no fling) |
-| Scroll an exact amount | `phoneuse scroll-by DY` (screen fraction or points; positive shows what is below). MCP: `scroll_by` |
+| Scroll an exact amount | `phoneuse scroll-by DY` (screen fraction or points; positive shows what is below) |
 | Home, back, overlays | `phoneuse home` · `back` · `switcher` · `control-center` · `notifications` · `dismiss` (the recipes; Cmd+H does not close overlays) |
 | Type text / keys | `phoneuse type "hello\n"` · `phoneuse key cmd+space` |
 | Show / hide the iPhone keyboard | `phoneuse keyboard` (Eject; it hides while Phone Use's keyboard is connected) |
@@ -196,7 +187,7 @@ you haven't done before.
 
 Your actions start an agent session by themselves (the user's view glows and
 their mouse and keyboard pause). When your task is done, run `phoneuse done`
-(MCP: `end_session`) to hand the phone back at once.
+to hand the phone back at once.
 
 ## When the user takes over
 
@@ -204,15 +195,15 @@ If an action fails with "The user took over the phone", or a result starts with
 PAUSED, stop and wait. Continue only when the user tells you to. A note that the
 picture is old means the phone's screen is off or mirroring stalled: ask the user.
 
-To see notifications, use `read_notifications` (CLI: `phoneuse notifications-read`):
+To see notifications, use `phoneuse notifications-read`:
 it opens Notification Center, reads it and closes it. They are private: use only
 what the task needs.
 
 ## Typing
 
 Typing replaces what the focused field already holds (fields often keep earlier
-text, such as a previous search or prompt); add `--append` (CLI) or
-`replace=false` (MCP) to add to it instead.
+text, such as a previous search or prompt); add `--append` to add to it
+instead.
 
 The phone applies autocorrect to typed text (a test typed "phoneuse" and sent
 "phone use"). Check what you typed with `phoneuse text` before sending anything

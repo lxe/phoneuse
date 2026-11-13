@@ -5,7 +5,7 @@ when it runs, and $3=0.8 gives $3 a default. Positions are screen fractions (0..
 or phone points when a value is above 1, as everywhere else.
 
 The built-in recipes were verified on the device (iPhone 17 Pro, iOS 26). Agents
-save their own with `phoneuse recipe save` (MCP: save_recipe) once a gesture works,
+save their own with `phoneuse recipe save` once a gesture works,
 into ~/.config/phoneuse/recipes.json; a saved recipe with a built-in's name replaces
 it on this PC (to tune one for a phone). "home" is the Home key, not a gesture.
 """

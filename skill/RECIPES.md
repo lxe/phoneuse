@@ -21,7 +21,6 @@ up            lift (a gesture ends lifted anyway)
 ```
 
 CLI: `phoneuse gesture down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up`.
-MCP: `gesture(steps="down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up")`.
 
 - `down` lands exactly where asked. A `down`, `hold`, `up` with no `move` (a tap or
   long press) goes as one timed press, so the hold is exact even over the bridge.
@@ -35,8 +34,8 @@ MCP: `gesture(steps="down 0.2 0.3 hold 1 move 0.7 0.6 1.2 hold 0.5 up")`.
   per step: drag, pause over a target, drag on.
 - Each gesture records a film: a frame at the end of every move, at the end of
   every hold with the finger down, before a long press lifts, and 0.3 and 0.8 s
-  after the lift, labelled, with the finger marked (film.py). MCP returns it; the
-  CLI prints `film: PATH` (`--film PATH` chooses the file). To see a moment, end a
+  after the lift, labelled, with the finger marked (film.py). The command prints
+  `film: PATH` (`--film PATH` chooses the file). To see a moment, end a
   step there: `hold 0.4` mid-drag adds a frame of the phone at that point.
 - Moving fast in the last instant before `up` flings scrolling content. To stop
   content exactly, end with a short slow move, or use `scroll` / `scroll-by`,
@@ -77,9 +76,8 @@ reads the drop point:
 
 ## Recipes
 
-A recipe is a gesture with a name: `phoneuse recipe NAME [VALUES]` (MCP:
-`recipe(name, values)`). `$1`, `$2`... in its steps take the values in order, and
-`$3=0.8` gives one a default. `phoneuse recipe list` (MCP: `recipes`) shows every
+A recipe is a gesture with a name: `phoneuse recipe NAME [VALUES]`. `$1`, `$2`... in its steps take the values in order, and
+`$3=0.8` gives one a default. `phoneuse recipe list` shows every
 recipe with its steps.
 
 When a gesture works for something you will do again, save it:
@@ -89,7 +87,6 @@ phoneuse recipe save move-icon down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up --
 phoneuse recipe move-icon 0.2 0.3 0.7 0.6
 ```
 
-MCP: `save_recipe(name="move-icon", steps="down $1 $2 hold 1.0 move $3 $4 1.0 hold 0.5 up", about="...")`.
 Saved recipes live in `~/.config/phoneuse/recipes.json` on this PC, for every
 agent that uses it. A saved recipe with a built-in's name replaces that one here
 (to tune it for this phone); `phoneuse recipe forget NAME` brings the built-in back.

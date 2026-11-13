@@ -55,7 +55,7 @@ def check_python():
 
 
 def check_packages():
-    mods = ["av", "numpy", "PIL", "aiohttp", "psutil", "mcp",
+    mods = ["av", "numpy", "PIL", "aiohttp", "psutil",
             "winrt.windows.devices.bluetooth", "winrt.windows.devices.bluetooth.genericattributeprofile",
             "winrt.windows.storage.streams", "winrt.windows.ui.notifications"]
     missing = []
@@ -67,7 +67,7 @@ def check_packages():
     if missing:
         report("FAIL", "Python packages missing: " + ", ".join(missing), INSTALL + "   (or: .venv\\Scripts\\pip install -e .)")
     else:
-        report("ok", "Python packages (PyAV, aiohttp, Windows Runtime Bluetooth, MCP SDK)")
+        report("ok", "Python packages (PyAV, aiohttp, Windows Runtime Bluetooth)")
 
 
 def check_encoder():

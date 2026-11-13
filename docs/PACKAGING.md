@@ -74,10 +74,17 @@ opens the phone in the browser. Settings hold the receiver name, Agent control, 
 paired iPhones and the Claude Code connection. Services start with the app and keep running in the background
 (the background portal), so agents can use the phone with the window closed.
 
-**Connecting Claude Code** installs the skill into `~/.claude/skills/phoneuse`, adds the MCP server to
-`~/.claude.json` as `flatpak run --command=phoneuse-mcp co.lxe.PhoneUse`, and puts a `phoneuse` command in
-`~/.local/bin` that runs the CLI inside the sandbox. The settings page shows whether each is in place and can
-remove them.
+**Connecting Claude Code** links `~/.claude/skills/phoneuse` to the installed app's skill, through Flatpak's
+`active` path so the link follows updates, and puts a `phoneuse` command in `~/.local/bin` that runs the CLI
+inside the sandbox. Agents use the phone through that command; there is no MCP server. The settings page shows
+whether both are in place and can remove them. Each time the app starts it redoes the connection for someone
+who connected before (claude_setup.refresh), so older setups catch up: a copied skill, or the MCP server
+earlier versions added to `~/.claude.json`.
+
+**Running the Flatpak from a checkout**: `scripts/dev-link.sh` sets a per-user Flatpak override that puts the
+checkout first on the app's Python path, so the app, its services and the `phoneuse` command all run the
+checkout's code, and links the skill to the checkout. Commands pick up edits at once; the app's services
+when it restarts. `scripts/dev-link.sh --off` goes back to the installed code.
 
 ## Open problems
 

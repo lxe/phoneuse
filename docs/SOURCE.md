@@ -110,16 +110,17 @@ phoneuse screenshot shot.png
 phoneuse done                 # hand the phone back to you
 ```
 
-**MCP:** the MCP server offers the same actions. After each action, it returns the
-screen once the screen has stopped changing.
+[skill/SKILL.md](../skill/SKILL.md) is a skill for Claude Code that teaches agents these
+commands. Agents use the phone through the `phoneuse` command; there is no MCP server. To
+use the skill, link it into `~/.claude/skills/phoneuse`:
 
 ```sh
-scripts/setup-mcp.sh
-claude mcp add --scope user phoneuse ~/phoneuse/bin/phoneuse-mcp
+ln -s ~/phoneuse/skill ~/.claude/skills/phoneuse
 ```
 
-[skill/SKILL.md](../skill/SKILL.md) is a skill for Claude Code. To use it, link it into
-`~/.claude/skills/phoneuse`.
+If you have the Phone Use Flatpak installed, `scripts/dev-link.sh` runs it from this checkout
+instead: the app, its services and the `phoneuse` command all use the code here, and the skill
+links here ([PACKAGING.md](PACKAGING.md)).
 
 ## Configuration
 

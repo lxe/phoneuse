@@ -81,19 +81,19 @@ moved without pause for over a second, like video, are ignored) and answers
 `settle`: return as soon as an action's result has appeared and big motion (a
 page, a scroll) has stopped; small motion that never stops (tiles cycling)
 counts as ambient and is reported, not waited for. No fixed delays. After an
-action, the MCP server waits up to 3 s for its first visible change (a phone that
-is recording its screen can take a second or more), then returns frames from 0.1,
-0.4 and 0.8 s after that change in one image (identical frames dropped), and the
-agent judges the motion itself, calling `wait` when it wants another look. It
-also hands out screenshots of the current picture, so they don't depend on the
-mirror window being uncovered.
+action, the CLI waits up to 3 s for its first visible change (a phone that is
+recording its screen can take a second or more). A gesture also records a film
+(`film.py`): frames from the end of each step and after the lift, in one image,
+so the agent sees what the phone did before the finger lifted. The service hands
+out screenshots of the current picture, so they don't depend on the mirror window
+being uncovered.
 
 **`phoneuse/web.py`** is the browser mirror at http://localhost:8777. It takes
 the hub's stream and passes the encoded frames to each tab over a WebSocket,
 asking the hub for a keyframe when a tab joins. Tabs decode with WebCodecs
 (`phoneuse/web/index.html`) and send pointer and key events back. The server
 listens on 127.0.0.1 only and accepts input only while the phone is mirroring
-and the tab is showing it. While an agent acts (every CLI or MCP action checks
+and the tab is showing it. While an agent acts (every CLI action checks
 in), the page glows, shows where the agent points, and takes no input from the
 page; Take over makes the agent's next action fail with a stop message until
 the user resumes it. A pill shows when the Bluetooth link is down.
@@ -134,8 +134,8 @@ per-element latency tracer.
 ## On Windows
 
 The same two channels, built from what Windows offers. Everything above the HID
-command protocol and the frames service (pointer.py, touch.py, the CLI, the MCP
-server, the browser page, settling, vision) is shared.
+command protocol and the frames service (pointer.py, touch.py, the CLI, the
+browser page, settling, vision) is shared.
 
 ```
             AirPlay video (Wi-Fi)                         Bluetooth LE HID (HID over GATT)
@@ -145,7 +145,7 @@ server, the browser page, settling, vision) is shared.
                                     avhub.py ── TCP subscriptions ──▶ frames.py, web.py      ▲
                                     (PyAV: decode once, NVENC again)       │                  │ 127.0.0.1 + token
                                                                     Edge app window ─ input ──┤ (ipc.py)
-                                                                    phoneuse CLI / MCP ───────┘
+                                                                    phoneuse CLI ─────────────┘
 ```
 
 **`phoneuse/windows/hid.py`** replaces the BlueZ daemon. Windows has no API for

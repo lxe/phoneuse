@@ -283,7 +283,7 @@ def need_mirror():
 
 
 LAST_SEEN = runtime_path("phoneuse-last-seen")
-NOTES = []  # remarks for the agent, printed (CLI) or returned (MCP) with the action
+NOTES = []  # remarks for the agent, printed with the action
 
 
 ACTION = ""  # what the agent is doing now, in a few words (the companion app's Live Activity)
@@ -1110,7 +1110,7 @@ def _small(rgb):
 
 def save_look(rgb):
     """Remember what the agent was just shown (a screenshot, a text read, or the
-    frame an MCP action returned): taps by position are checked against it."""
+    last frame of a gesture film): taps by position are checked against it."""
     import numpy as np
     try:
         np.save(LOOK, _small(rgb))
@@ -1195,6 +1195,8 @@ def vision_python():
     from .vision import mac_ocr
     if mac_ocr():  # macOS: Apple's Vision through phoneuse-ocr, in this Python
         return sys.executable
+    if os.environ.get("FLATPAK_ID") and importlib.util.find_spec("rapidocr"):
+        return sys.executable  # the app's RapidOCR, even when the code comes from a checkout (dev-link.sh)
     py = os.path.join(ROOT, ".venv-vision", "bin", "python")
     if os.path.exists(py):
         return py

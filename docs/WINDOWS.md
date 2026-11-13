@@ -50,7 +50,7 @@ How it differs from Linux:
   Linux. Agents don't notice.
 - The bridge hasn't been tried on Windows.
 
-Logs are in `%LOCALAPPDATA%\phoneuse\run`. For agents, `bin\phoneuse-mcp.exe` is the
-MCP server: `claude mcp add --scope user phoneuse C:\path\to\phoneuse\bin\phoneuse-mcp.exe`.
+Logs are in `%LOCALAPPDATA%\phoneuse\run`. Agents use `bin\phoneuse.exe` (on your PATH after
+the install), guided by [skill/SKILL.md](../skill/SKILL.md).
 
 Configuration is the same as on Linux, in `%APPDATA%\phoneuse\config.toml` ([SOURCE.md](SOURCE.md#configuration)).

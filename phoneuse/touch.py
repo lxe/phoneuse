@@ -254,12 +254,12 @@ def scroll_drag(hid, fx0, fy0, fx1, fy1):
 
 
 # ---------- gestures (for agents) ----------
-# One finger, described as steps (the `gesture` command and MCP tool):
+# One finger, described as steps (the `gesture` command):
 #   down X Y      touch down at (X, Y); the pointer goes there and settles first
 #   move X Y [S]  slide to (X, Y) over S seconds (default MOVE_SECONDS), finger down
 #   hold S        keep still for S seconds (finger down or up)
 #   up            lift (a gesture ends lifted anyway)
-# X and Y are screen fractions (0..1) here; the CLI and MCP convert points first.
+# X and Y are screen fractions (0..1) here; the CLI converts points first.
 
 MOVE_SECONDS = 0.3
 BRIDGE_TAP_MAX = 3.0  # s: the bridge times holds up to 3 s (bridge.py tap)

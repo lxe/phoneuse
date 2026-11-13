@@ -347,7 +347,7 @@ class Window(Adw.ApplicationWindow):
         self.pass_forget.set_visible(saved)
 
         c = s["claude"]
-        ok = c["skill"] and c["mcp"] and c["command"]
+        ok = c["skill"] and c["command"]
         self.claude_row.set_subtitle("Claude Code can see and use the phone" if ok
                                      else "Claude Code isn't installed" if not c["claude"]
                                      else "Let Claude Code see and use the phone")

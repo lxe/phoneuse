@@ -16,7 +16,6 @@ dependencies = [
     "pillow; sys_platform == 'win32'",
     "aiohttp; sys_platform == 'win32'",           # the browser mirror
     "psutil; sys_platform == 'win32'",            # is a phone mirroring (AirPlay's TCP connection)
-    "mcp>=2.3; sys_platform == 'win32'",          # the MCP server
     # Bluetooth LE HID and notifications through the Windows Runtime
     "winrt-runtime; sys_platform == 'win32'",
     "winrt-Windows.Devices.Bluetooth; sys_platform == 'win32'",
@@ -32,7 +31,6 @@ dependencies = [
 
 [project.scripts]
 phoneuse = "phoneuse.cli:main"
-phoneuse-mcp = "phoneuse.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["phoneuse*"]

@@ -16,7 +16,7 @@ release asset URLs from the GitHub API, and writes the sitemap. Hosted on the lx
 
 Both groups, agents first (lxe, 2026-11-09):
 
-1. People who run coding agents (Claude Code and other MCP clients) on a Linux PC or a Mac and want the agent to
+1. People who run coding agents (Claude Code, Codex and other agents with a shell) on a Linux PC or a Mac and want the agent to
    use their iPhone: open apps, read the screen, tap, type.
 2. People who want to use their iPhone from the computer themselves, with the computer's mouse and keyboard,
    including iOS developers and testers.
@@ -45,8 +45,8 @@ agent's current action, and Take over stops it.
   USB-C, no soldering. The Linux app flashes it over USB; setup over BLE with a matching 6-digit code; joins
   2.4 GHz Wi-Fi; the iPhone pairs with "Phone Use Bridge". Signed UDP control (HMAC-SHA256). Can sit next to the
   phone on a battery or charger.
-- Agents: `phoneuse` CLI subcommands (`open`, `text`, `tap-on`, `screenshot`, `done`) and an MCP server
-  with the same actions that returns the screen once it has stopped changing. A Claude Code skill ships in the repo.
+- Agents: the `phoneuse` CLI (`open`, `text`, `tap-on`, `gesture`, `recipe`, `screenshot`, `done`); no MCP server
+  (removed 2026-11-12, lxe: one surface). A Claude Code skill ships in the app and the repo.
 - Companion app: pairs over the local network (one-time link, 10 minutes), Live Activity with current action,
   step count and time, Take over / Resume, Agent control (Always, After a delay, Ask every time),
   settings for the bridge, keep-awake, keyboard, pointer, mirror audio.

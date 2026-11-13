@@ -186,26 +186,6 @@ SCREEN_PT, SCREEN_SOURCE = screen_points()
 PHONE_ASPECT = SCREEN_PT[0] / SCREEN_PT[1]
 
 
-def refresh_screen():
-    """For long-running processes that import phoneuse's modules (the MCP server):
-    when a phone with another screen size has started mirroring since, update the
-    size everywhere it was imported. The services restart instead (`phoneuse up`
-    watches MODEL_FILE). True when it changed."""
-    global SCREEN_PT, SCREEN_SOURCE, PHONE_ASPECT
-    pts, source = screen_points()
-    if pts == SCREEN_PT:
-        return False
-    old_pts, old_aspect = SCREEN_PT, PHONE_ASPECT
-    SCREEN_PT, SCREEN_SOURCE, PHONE_ASPECT = pts, source, pts[0] / pts[1]
-    for name, mod in list(sys.modules.items()):
-        if name == "phoneuse" or name.startswith("phoneuse."):
-            for attr, old, new in (("SCREEN_PT", old_pts, pts), ("PT", old_pts, pts),
-                                   ("PHONE_ASPECT", old_aspect, PHONE_ASPECT)):
-                if getattr(mod, attr, None) == old:
-                    setattr(mod, attr, new)
-    return True
-
-
 # Local services. On Linux these are unix sockets (the root HID daemon's is root-owned and
 # group-writable; HID_SOCKET above); on Windows, TCP ports on 127.0.0.1 guarded by a per-user
 # token (ipc.py).

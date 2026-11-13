@@ -4,7 +4,6 @@ __pycache__/
 *.pyc
 allowed
 telemetry-sessions/
-.venv-mcp/
 bridge/build/
 bridge/sdkconfig
 bridge/sdkconfig.old

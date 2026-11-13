@@ -300,7 +300,7 @@ def main():
     for d in ("phoneuse", "skill"):
         shutil.copytree(os.path.join(REPO, d), os.path.join(out, d),
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    for f in ("phoneuse", "phoneuse-mcp"):
+    for f in ("phoneuse",):
         shutil.copy2(os.path.join(REPO, "bin", f), os.path.join(out, "bin", f))
 
     # Nothing may still point into Homebrew, or need a macOS newer than the app's minimum

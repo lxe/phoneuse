@@ -2,7 +2,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 [-NoVision] [-NoUxPlay] [-NoFirewall] [-NoPath]
 #
 #   1. .venv with phoneuse and its Python packages (PyAV, aiohttp, the Windows Runtime
-#      Bluetooth bindings, the MCP SDK); `phoneuse` and `phoneuse-mcp` launchers in bin\
+#      Bluetooth bindings); the `phoneuse` launcher in bin\
 #   2. MSYS2 (C:\msys64) and UxPlay, the AirPlay receiver, built from source
 #   3. a Windows Firewall rule so the iPhone can reach UxPlay (one UAC prompt)
 #   4. bin\ on your PATH
@@ -23,7 +23,7 @@ $VPy = "$Root\.venv\Scripts\python.exe"
 & $VPy -m pip install --quiet --upgrade pip
 & $VPy -m pip install --quiet -e $Root
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
-foreach ($exe in "phoneuse.exe", "phoneuse-mcp.exe") {
+foreach ($exe in @("phoneuse.exe")) {
     # pip's launchers point at .venv's python by absolute path, so they work from bin\.
     # A launcher that is running (`phoneuse install` itself, or `phoneuse up`) can't be
     # replaced; it only needs replacing when it changed.

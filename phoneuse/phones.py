@@ -4,7 +4,7 @@
 mirrors under (UxPlay prints it on every connection): its model, when it was
 first and last seen, and its pointer calibration (calibrate.py), which drags use
 in place of the iPhone 17 Pro table in touch.py. `phoneuse up` writes the
-mirroring phone's name to a runtime file, so every process (CLI, MCP, the browser
+mirroring phone's name to a runtime file, so every process (the CLI, the browser
 mirror's server) reads the same answer.
 """
 import json
