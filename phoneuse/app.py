@@ -1062,7 +1062,7 @@ class App(Adw.Application):
 
     def about(self):
         Adw.AboutDialog(application_name="Phone Use", application_icon=APP_ID, developer_name="Aleksey Smolenchuk",
-                        version="0.1.3", website="https://github.com/lxe/phoneuse",
+                        version="0.1.4", website="https://github.com/lxe/phoneuse",
                         license_type=Gtk.License.MIT_X11).present(self.win)
 
     def request_background(self, on):
