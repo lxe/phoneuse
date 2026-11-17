@@ -16,7 +16,7 @@ import time
 
 import numpy as np
 
-from . import phones, screen, touch
+from . import orientation, phones, screen, touch
 from .config import SCREEN_PT
 
 SIZES = [28, 20, 12, 8, 4, 2, 1]  # largest first: each one's travel is aimed from the last
@@ -122,7 +122,10 @@ def run(h, sizes=SIZES, log=print, alive=None):
     iPhone 15 Pro moved 2-22% as far as the 17 Pro table, least for small reports),
     so each size's report count comes from the size measured before it. The first
     guess comes from this link's default table: over Bluetooth LE the 17 Pro table
-    guessed 2 reports for 28 units, too few to measure, and the error carried on."""
+    guessed 2 reports for 28 units, too few to measure, and the error carried on.
+    Portrait only: START and the sweeps assume it (the pointer moves up the screen)."""
+    if orientation.is_landscape(orientation.frame_size()):
+        raise RuntimeError("calibration needs the phone upright (portrait); turn it back and run it again")
     table, last = [], None
     for u in sizes:
         if alive:

@@ -311,6 +311,7 @@ def test_aim_finds_the_pointer_from_a_short_sideways_slide(monkeypatch):
 
     class T:
         pos = (0.32, 0.20)
+        pts = SCREEN_PT  # Touch keeps the screen's points for the whole gesture
     t = T()
     monkeypatch.setattr(aim, "_slide", lambda t, fx, fy: setattr(t, "pos", (fx, fy)))
     x, y = aim.locate(t)

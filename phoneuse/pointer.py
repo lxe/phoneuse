@@ -129,7 +129,7 @@ class Pointer:
         room = w
         for i in (0, 1):
             if abs(d[i]) > 1e-6:
-                size = touch.SCREEN_PT[i]
+                size = touch.pt()[i]
                 at = self.touch[i] * size + self.carry[i]
                 edge = (1 - SCROLL_MARGIN) * size - at if d[i] > 0 else at - SCROLL_MARGIN * size
                 room = min(room, max(edge, 0.0) / abs(d[i]))
@@ -173,7 +173,7 @@ class Pointer:
         px, py = self.sent or (clamp(fx), clamp(fy))
         self.hid().cmd(f"a {px:.5f} {py:.5f} 1")
         self.touch = [px, py]
-        self.carry = [(clamp(fx) - px) * touch.SCREEN_PT[0], (clamp(fy) - py) * touch.SCREEN_PT[1]]
+        self.carry = [(clamp(fx) - px) * touch.pt()[0], (clamp(fy) - py) * touch.pt()[1]]
         self.dragged_from = (fx, fy)
         self.pressed = True
 
@@ -252,8 +252,8 @@ class Pointer:
                             self.wheel[i] -= step[i]
                             self.carry[i] += step[i]
                     else:
-                        self.carry[0] += (fx - lx) * touch.SCREEN_PT[0]
-                        self.carry[1] += (fy - ly) * touch.SCREEN_PT[1]
+                        self.carry[0] += (fx - lx) * touch.pt()[0]
+                        self.carry[1] += (fy - ly) * touch.pt()[1]
                     ux, uy = touch.whole_units(*self.carry)  # never more than the pointer moved
                     if self.scrolling:
                         if ux or uy:
@@ -272,8 +272,8 @@ class Pointer:
                         moved = touch.points_for(mag)
                         self.carry[0] -= moved * ux / mag
                         self.carry[1] -= moved * uy / mag
-                        self.touch[0] = clamp(self.touch[0] + moved * ux / mag / touch.SCREEN_PT[0])
-                        self.touch[1] = clamp(self.touch[1] + moved * uy / mag / touch.SCREEN_PT[1])
+                        self.touch[0] = clamp(self.touch[0] + moved * ux / mag / touch.pt()[0])
+                        self.touch[1] = clamp(self.touch[1] + moved * uy / mag / touch.pt()[1])
             except Exception as e:
                 if str(e) != self.last_error:  # say it once, not every tick
                     self.log("pointer error:", e)

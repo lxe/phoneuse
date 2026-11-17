@@ -53,7 +53,8 @@ BUTTONS = {"left": 1, "right": 2, "middle": 4}
 
 def absolute(fx, fy, buttons):
     """Report 3 payload: buttons, then x and y as 0..32767."""
-    x, y = (max(0, min(32767, round(float(v) * 32767))) for v in (fx, fy))
+    from .orientation import hid_fractions  # the one place that decides how orientation maps (unverified)
+    x, y = (max(0, min(32767, round(float(v) * 32767))) for v in hid_fractions(float(fx), float(fy)))
     return [buttons & 0x07, x & 0xFF, x >> 8, y & 0xFF, y >> 8]
 
 

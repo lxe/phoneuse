@@ -90,15 +90,14 @@ import threading
 import time
 import urllib.request
 
-from . import calibrate, config, hidproto, ipc, phones, screen, touch
-from .config import CFG, HID_SOCKET, IS_WINDOWS, MACOS, NAME, RUNTIME_DIR, SCREEN_PT, VISION_SOCKET, runtime_path
+from . import calibrate, config, hidproto, ipc, orientation, phones, screen, touch
+from .config import CFG, HID_SOCKET, IS_WINDOWS, MACOS, NAME, RUNTIME_DIR, VISION_SOCKET, runtime_path
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(PKG)  # the repository checkout
 WEB_PORT = int(CFG["web_port"])
 
-PT = SCREEN_PT
 LAST_ACTION = runtime_path("phoneuse-last-action")
 
 
@@ -272,7 +271,8 @@ def point(xs, ys):
     """Parse a coordinate pair: fractions, or iPhone points if either is > 1."""
     x, y = float(xs), float(ys)
     if x > 1 or y > 1:
-        x, y = x / PT[0], y / PT[1]
+        pw, ph = orientation.current_points()
+        x, y = x / pw, y / ph
     if not (0 <= x <= 1 and 0 <= y <= 1):
         die(f"coordinate out of range: {xs} {ys}")
     return x, y
@@ -470,8 +470,9 @@ class AgentHid:
                 if mag:
                     moved = touch.points_for(mag)
                     x, y, down = self.dot
-                    self.dot = (min(max(x + moved * ux / mag / SCREEN_PT[0], 0.0), 1.0),
-                                min(max(y + moved * uy / mag / SCREEN_PT[1], 0.0), 1.0), down)
+                    pw, ph = orientation.current_points()
+                    self.dot = (min(max(x + moved * ux / mag / pw, 0.0), 1.0),
+                                min(max(y + moved * uy / mag / ph, 0.0), 1.0), down)
                     self.dots.show(self.dot)
         except (IndexError, ValueError):
             pass
@@ -605,7 +606,8 @@ def gesture_point(xs, ys):
     """point(), for gesture steps: an error the caller reports instead of an exit."""
     x, y = float(xs), float(ys)
     if x > 1 or y > 1:
-        x, y = x / PT[0], y / PT[1]
+        pw, ph = orientation.current_points()
+        x, y = x / pw, y / ph
     if not (0 <= x <= 1 and 0 <= y <= 1):
         raise touch.GestureError(f"position out of range: {xs} {ys}")
     return x, y
@@ -700,7 +702,7 @@ def scroll(h, direction, n=1.0):
     """Scroll the content by n half-screens (0.45 of the screen height each)."""
     # In points: scroll_by reads a value above 1 as points, so 3 or more half-screens
     # given as a fraction (1.35) scrolled 1.35 pt, which is nothing.
-    pts = 0.45 * n * SCREEN_PT[1]
+    pts = 0.45 * n * orientation.current_points()[1]
     scroll_by(h, pts if direction == "down" else -pts)
 
 
@@ -709,14 +711,15 @@ def scroll_by(h, dy, x=0.5):
     shows what is below. A drag that slows down before it lifts, so iOS doesn't
     fling and the content stops where the finger lifts; long scrolls take
     several drags."""
+    ph = orientation.current_points()[1]
     if abs(dy) > 1:
-        dy /= SCREEN_PT[1]
+        dy /= ph
     # Equal drags of at most 0.7: splitting 0.72 into 0.7 + 0.02 left a 17 pt drag
     # at the end, short enough for iOS to read as a tap on whatever was there.
     n = max(1, math.ceil(abs(dy) / 0.7 - 1e-9))
     d = abs(dy) / n
     if d <= 0.005:
-        die(f"Not scrolled: {abs(dy) * SCREEN_PT[1]:.1f} pt is too little to scroll. scroll-by takes a "
+        die(f"Not scrolled: {abs(dy) * ph:.1f} pt is too little to scroll. scroll-by takes a "
             "screen fraction up to 1, or phone points above 1.")
     for _ in range(n):
         y0, y1 = (0.85, 0.85 - d) if dy > 0 else (0.15, 0.15 + d)
@@ -1085,7 +1088,7 @@ def spotlight_hit(name):
         lines = screen_text()
     except SystemExit:
         return None
-    return spotlight_tap(lines, name, PT[1])
+    return spotlight_tap(lines, name, orientation.current_points()[1])
 
 
 def spotlight_tap(lines, name, screen_h_pt):
@@ -1207,7 +1210,8 @@ def screenshot(path):
     img = Image.open(io.BytesIO(png))
     save_look(img.convert("RGB"))
     w, hgt = img.size
-    print(f"{path} ({w}x{hgt} px = {PT[0]}x{PT[1]} pt; tap with fractions of this image or points)")
+    pw, ph = orientation.current_points()
+    print(f"{path} ({w}x{hgt} px = {pw}x{ph} pt; tap with fractions of this image or points)")
 
 
 # ---------- vision (OCR, see vision.py) ----------

@@ -27,9 +27,9 @@ import time
 
 from aiohttp import web
 
-from . import screen, unlock
+from . import orientation, screen, unlock
 from .agent_session import AgentSession, set_start_setting, start_setting
-from .config import CFG, IS_WINDOWS, NAME, SCREEN_PT, config_path, runtime_path
+from .config import CFG, IS_WINDOWS, NAME, config_path, runtime_path
 from .hidclient import Hid
 from .pointer import Keys, Pointer
 
@@ -151,6 +151,7 @@ class Mirror:
         self.stream = (AvStream if IS_WINDOWS else Stream)(self._frame)
         self.mirroring = False
         self.hub_live = False
+        self.screen = orientation.points_for(None)  # the phone's screen in points as it faces now
         self.hid = None
         # Who controls the phone (agent_session.py): the one record the gate, the pages,
         # the companion app and the notifications derive from.
@@ -355,7 +356,12 @@ class Mirror:
             if not IS_WINDOWS:  # Windows: the hub's status said it above
                 mirroring = await loop.run_in_executor(None, screen.airplay_mirroring)  # lsof on macOS: not on the loop
             bt = await loop.run_in_executor(None, self.bluetooth_up)
-            changed = mirroring != self.mirroring or bt != self.bluetooth
+            size = await loop.run_in_executor(None, orientation.refresh)  # None: no picture; keep the shape we had
+            turned = size is not None and orientation.points_for(size) != self.screen
+            if turned:
+                self.screen = orientation.points_for(size)
+                log(f"phone turned: screen {self.screen[0]} x {self.screen[1]} pt")
+            changed = mirroring != self.mirroring or bt != self.bluetooth or turned
             if bt and not self.bluetooth:  # (re)connected: rest the pointer where it touches nothing
                 self.hover_at = PARK
                 try:
@@ -402,7 +408,7 @@ class Tab:
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
                           "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
                           "awake": self.mirror.awake, "stale": self.mirror.stale,
-                          "name": NAME, "screen": SCREEN_PT,
+                          "name": NAME, "screen": self.mirror.screen,
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
 
@@ -441,7 +447,7 @@ class Tab:
             self.pointer.release()
         elif t == "scroll":  # fractions of the screen to drag the content by
             self.pointer.hover(msg["x"], msg["y"])
-            self.pointer.scroll(msg["dx"] * SCREEN_PT[0], msg["dy"] * SCREEN_PT[1])
+            self.pointer.scroll(msg["dx"] * self.mirror.screen[0], msg["dy"] * self.mirror.screen[1])
         elif t == "mod":
             self.keys.modifier(int(msg["bit"]), bool(msg["down"]))
         elif t == "key":

@@ -7,8 +7,10 @@ at any time without Screen Mirroring being restarted. Control is the "frames"
 service (ipc.py: a unix socket, or 127.0.0.1 and a token on Windows), one line per
 request:
 
-  status       "ok live=1 seq=N": live while it has a picture of the phone; N
-               counts meaningful picture changes (not pointer moves or carets)
+  status       "ok live=1 seq=N size=WxH": live while it has a picture of the phone; N
+               counts meaningful picture changes (not pointer moves or carets); WxH is
+               the latest frame's size in pixels ("-" before one), wider than tall when
+               the phone is sideways (orientation.py)
   settle [N|-] [Q] [C]  wait until the picture is still for Q seconds (default 0.1);
                with N, first up to C seconds (default 0.6) for a change after N;
                the answer's reacted= says how long that change took ("-": none)
@@ -24,8 +26,8 @@ import time
 
 import numpy as np
 
-from . import ipc, screen
-from .config import IS_WINDOWS, SCREEN_PT
+from . import ipc, orientation, screen
+from .config import IS_WINDOWS
 
 DYNAMIC_AFTER = 1.0  # a region moving continuously this long (s) is video/animation: ignored
 AMBIENT_AFTER = 0.4  # after this long (s), only big motion keeps settle waiting
@@ -35,7 +37,12 @@ BIG = 0.05  # a change of at least this share of the picture is big (a page, a s
 # starts moving only after that (an app launch came 0.17 s after its icon's highlight
 # on an iPhone 15 Pro: a 0.1 s wait read the old screen).
 SMALL_QUIET = 0.3
-SHOT_SIZE = (SCREEN_PT[0] * 2, SCREEN_PT[1] * 2)
+
+
+def shot_size(frame_size=None):
+    """Screenshot size: 2 px per phone point, in the shape the phone currently has."""
+    w, h = orientation.points_for(frame_size)
+    return (w * 2, h * 2)
 
 
 def log(*a):
@@ -170,7 +177,9 @@ class Frames:
             cmd, _, arg = line.decode(errors="replace").strip().partition(" ")
             try:
                 if cmd == "status":
-                    conn.sendall(f"ok live={int(self.source.live())} seq={self.seq}\n".encode())
+                    size = self.source.frame_size()  # orientation.py reads the phone's shape from it
+                    wh = f"{size[0]}x{size[1]}" if size else "-"
+                    conn.sendall(f"ok live={int(self.source.live())} seq={self.seq} size={wh}\n".encode())
                 elif cmd == "settle":  # settle [SINCE|-] [QUIET] [CHANGE]
                     a = arg.split()
                     since = int(a[0]) if a and a[0] != "-" else None
@@ -273,12 +282,16 @@ class AvSource:
     def live(self):
         return self.last is not None and self.mirroring
 
+    def frame_size(self):
+        f = self.last
+        return (f.width, f.height) if f is not None else None
+
     def screenshot(self):
         with self.shot_lock:
             f = self.last
             if f is None:
                 return None
-            img = f.to_image().resize(SHOT_SIZE)  # PIL; bilinear, like the Linux videoscale
+            img = f.to_image().resize(shot_size((f.width, f.height)))  # PIL; bilinear, like the Linux videoscale
             buf = io.BytesIO()
             img.save(buf, "PNG", compress_level=1)
             return buf.getvalue()
@@ -304,14 +317,15 @@ class GstSource:
         rtp = "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96"
         # System memory: NVDEC's own CUDA surfaces get reused while we hold the last one.
         download = "video/x-raw ! " if dec.startswith("nvh264dec") else ""
-        w, h = SHOT_SIZE
+        w, h = shot_size()
         self.pipe = Gst.parse_launch(
             f'udpsrc reuse=false address=127.0.0.1 port={screen.FRAMES_RTP_PORT} buffer-size=8388608 caps="{rtp}" '
             f"! rtph264depay ! h264parse ! {dec} ! {download}appsink name=raw sync=false async=false emit-signals=true "
             f"appsrc name=shot format=time do-timestamp=true ! videoconvert ! videoscale "
-            f"! video/x-raw,format=RGB,width={w},height={h} ! pngenc compression-level=1 "
+            f"! capsfilter name=shotsize caps=\"video/x-raw,format=RGB,width={w},height={h}\" ! pngenc compression-level=1 "
             f"! appsink name=png sync=false async=false max-buffers=1 drop=true")
         self.shot_src = self.pipe.get_by_name("shot")
+        self.shot_caps = self.pipe.get_by_name("shotsize")
         self.png = self.pipe.get_by_name("png")
         self.pipe.get_by_name("raw").connect("new-sample", self._decoded)
         bus = self.pipe.get_bus()
@@ -330,6 +344,8 @@ class GstSource:
             self.caps = sample.get_caps()
             self.vinfo = self.GstVideo.VideoInfo.new_from_caps(self.caps)
             self.shot_src.set_property("caps", self.caps)
+            w, h = shot_size((self.vinfo.width, self.vinfo.height))  # the phone turned: screenshots follow
+            self.shot_caps.set_property("caps", self.Gst.Caps.from_string(f"video/x-raw,format=RGB,width={w},height={h}"))
         self.last = sample.get_buffer()
         self.frames.feed(self._thumb(self.last))
         return Gst.FlowReturn.OK
@@ -365,6 +381,10 @@ class GstSource:
 
     def live(self):
         return self.last is not None
+
+    def frame_size(self):
+        vi = self.vinfo
+        return (vi.width, vi.height) if vi is not None and self.last is not None else None
 
     def screenshot(self):
         Gst = self.Gst

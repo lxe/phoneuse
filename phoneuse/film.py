@@ -22,8 +22,7 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from . import screen
-from .config import SCREEN_PT
+from . import orientation, screen
 
 AFTER = (0.3, 0.8)  # s after the lift
 BUDGET = 560_000  # pixels in the composed image (~750 tokens)
@@ -104,7 +103,8 @@ def compose(frames):
     if not frames:
         return None, "no frames (is the mirror showing the phone?)"
     n = len(frames)
-    aspect = SCREEN_PT[0] / SCREEN_PT[1]
+    pw, ph = orientation.current_points()  # the phone's shape now: sideways frames stay wide
+    aspect = pw / ph
     h = int(min(MAX_H, (BUDGET / (n * aspect)) ** 0.5))
     w = int(h * aspect)
     gap = 6
