@@ -2,7 +2,7 @@
 
 Each check prints one line: ok, note (works, but worth knowing), or FAIL with the
 fix underneath. Exits 1 when anything failed. `--quick` skips the slow checks
-(the vision models load torch).
+(loading the OCR).
 """
 import importlib
 import json
@@ -291,10 +291,9 @@ def check_vision(quick):
     # OCR on the GPU is real only if a session actually opens on CUDA: onnxruntime lists
     # the CUDA provider even when its DLLs are missing, then quietly runs on the CPU.
     probe = (
-        "import glob, json, os, sys, importlib\n"
+        "import glob, json, os, sys\n"
         "import onnxruntime as o, rapidocr\n"
         "sys.platform == 'win32' and hasattr(o, 'preload_dlls') and o.preload_dlls()\n"
-        "t = importlib.import_module('torch')\n"
         "ocr = False\n"
         "m = sorted(glob.glob(os.path.join(os.path.dirname(rapidocr.__file__), '**', '*.onnx'), recursive=True))\n"
         "if m and 'CUDAExecutionProvider' in o.get_available_providers():\n"
@@ -303,18 +302,18 @@ def check_vision(quick):
         "        ocr = s.get_providers()[0] == 'CUDAExecutionProvider'\n"
         "    except Exception:\n"
         "        pass\n"
-        "print(json.dumps([t.cuda.is_available(), ocr]))\n")
+        "print(json.dumps(ocr))\n")
     code, out = run([cli.VISION_PY, "-c", probe], timeout=180, cwd=ROOT)
     try:
-        torch_cuda, ort_cuda = json.loads(out.splitlines()[-1])
+        ort_cuda = json.loads(out.splitlines()[-1])
     except (ValueError, IndexError):
         report("FAIL", f"screen-reading models don't load: {out[-300:]}",
                r"powershell -ExecutionPolicy Bypass -File scripts\windows\setup-vision.ps1")
         return
-    if torch_cuda and ort_cuda:
-        report("ok", "screen-reading models (OCR and grounding on the GPU)")
+    if ort_cuda is True:
+        report("ok", "screen-reading models (OCR on the GPU)")
     else:
-        report("note", f"screen-reading models on the CPU (GPU: grounding {torch_cuda}, OCR {ort_cuda}); slower but fine")
+        report("note", "screen-reading models on the CPU (OCR not on the GPU); slower but fine")
 
 
 def check_linux():
