@@ -22,7 +22,6 @@ import time
 
 from . import screen, touch
 from .calibrate import SETTLE
-from .config import SCREEN_PT
 
 NUDGE = 14    # pt the pointer slides sideways to be seen at two places (overlapping is fine)
 SEARCH = 45   # pt from where the drag aimed: a spot farther away isn't the pointer
@@ -51,17 +50,18 @@ def locate(t):
     picture doesn't show it clearly. Slides the finger NUDGE points sideways to look."""
     import numpy as np
     gx, gy = t.pos
+    pw, ph = t.pts
     side = 1 if gx < 0.5 else -1  # toward the middle
     at = _frame()
-    _slide(t, gx + side * NUDGE / SCREEN_PT[0], gy)
+    _slide(t, gx + side * NUDGE / pw, gy)
     moved = _frame()
     if at.shape != moved.shape:
         return None
     h, w = at.shape[:2]
-    px = w / SCREEN_PT[0]  # pixels per point
+    px = w / pw  # pixels per point
     near = [(xs, ys) for c, xs, ys in screen._components(np.abs(moved - at).max(axis=2) > 40)
-            if c >= 3 and abs(xs.mean() / px - t.pos[0] * SCREEN_PT[0]) < SEARCH
-            and abs(ys.mean() / px - gy * SCREEN_PT[1]) < SEARCH]
+            if c >= 3 and abs(xs.mean() / px - t.pos[0] * pw) < SEARCH
+            and abs(ys.mean() / px - gy * ph) < SEARCH]
     if not near:
         return None
     xs = np.concatenate([x for x, _ in near])
@@ -86,7 +86,7 @@ def correct(t, target, log=None):
         real = locate(t)
         if real is None:
             break
-        ex, ey = (target[0] - real[0]) * SCREEN_PT[0], (target[1] - real[1]) * SCREEN_PT[1]
+        ex, ey = (target[0] - real[0]) * t.pts[0], (target[1] - real[1]) * t.pts[1]
         errs.append(round((ex * ex + ey * ey) ** 0.5, 1))
         t.pos = real  # the truth, from the picture
         _slide(t, *target)

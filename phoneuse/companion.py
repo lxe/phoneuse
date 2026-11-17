@@ -823,6 +823,11 @@ class Companion:
         On macOS, mDNSResponder publishes it for as long as `dns-sd -R` runs."""
         if MACOS:
             return await self._advertise_dns_sd()
+        if os.name == "nt":
+            # No Avahi (gi) on Windows: say so once instead of every 30 s. Pairing links carry the
+            # PC's address; Bonjour is only the app's fallback when that address changes.
+            return log("not published over Bonjour (Windows): after this PC's address changes, "
+                       "pair the app again (phoneuse app pair)")
         group = [None]
         conn = [None]  # held for as long as we publish: Avahi frees a group when its connection closes
 

@@ -28,7 +28,7 @@ gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GLib, Graphene, Gsk, Gst, Gtk, Pango, PangoCairo  # noqa: E402
 
-from . import screen  # noqa: E402
+from . import orientation, screen  # noqa: E402
 from .config import CFG, NAME, decoder  # noqa: E402
 
 APP_ID = screen.MIRROR_CLASS
@@ -41,8 +41,11 @@ def window_rule():
     """Hyprland: float the window at the phone's shape; resizing keeps the aspect
     ratio. Its decorations stay the user's own. The size isn't remembered, because
     keep_aspect_ratio would lock the shape of a remembered size. Lua-config
-    Hyprland first; classic keywords as a fallback (untested)."""
-    w, h = screen.window_size(CFG["mirror_width"])
+    Hyprland first; classic keywords as a fallback (untested).
+    The rule is written once, for an upright phone: when the phone turns sideways the
+    picture inside turns with it (Phone.points), but this rule's aspect ratio can't
+    follow, so the window keeps its shape and the bezel grows. Resize it by hand."""
+    w, h = screen.window_size(CFG["mirror_width"], orientation.points_for(None))
     lua = (f'hl.window_rule({{ name = "phoneuse-float", match = {{ class = "^{APP_ID}$" }}, '
            "float = true, "
            f"keep_aspect_ratio = true, persistent_size = false, size = {{ {w}, {h} }} }})")
@@ -102,14 +105,21 @@ class Phone(Gtk.Widget):
             self.queue_draw()  # the hint depends on whether the phone is mirroring
         return True
 
+    def points(self):
+        """The screen in points as the picture faces: the paintable knows the frame's size."""
+        size = None
+        if self.paintable is not None and not self.waiting:
+            size = (self.paintable.get_intrinsic_width(), self.paintable.get_intrinsic_height())
+        return orientation.points_for(size)
+
     def do_snapshot(self, snap):
         w, h = self.get_width(), self.get_height()
-        sx, sy, sw, sh = screen.picture_rect((0, 0), (w, h))
+        sx, sy, sw, sh = screen.picture_rect((0, 0), (w, h), self.points())
         snap.append_color(BEZEL, Graphene.Rect().init(0, 0, w, h))
         # the screen, clipped to its rounded corners
         rect = Graphene.Rect().init(sx, sy, sw, sh)
         clip = Gsk.RoundedRect()
-        clip.init_from_rect(rect, screen.SCREEN_RADIUS * sw)
+        clip.init_from_rect(rect, screen.SCREEN_RADIUS * min(sw, sh))  # a fraction of the short side
         snap.push_rounded_clip(clip)
         snap.append_color(BLACK, rect)
         if not self.waiting:
@@ -148,7 +158,7 @@ class Mirror(Gtk.Application):
     def do_activate(self):
         win = Gtk.ApplicationWindow(application=self, title=screen.TITLE_WAITING)
         win.set_decorated(False)
-        w, h = screen.window_size(CFG["mirror_width"])
+        w, h = screen.window_size(CFG["mirror_width"], orientation.points_for(None))
         win.set_default_size(w, h)
         self.phone = Phone()
         win.set_child(self.phone)

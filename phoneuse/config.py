@@ -78,11 +78,15 @@ DEFAULTS = {
     "uxplay": "auto",
     "audio": True,
     "app_window": True,
+    # Windows: "auto" uses the native mirror window (windows/dist) when it's built, "browser" the Edge/Chrome one
+    "window": "auto",
     "service_port": 47810,
 }
 
 
 def config_dir():
+    if os.environ.get("PHONEUSE_CONFIG_DIR"):  # the portable Windows app keeps its settings beside it
+        return os.environ["PHONEUSE_CONFIG_DIR"]
     if IS_WINDOWS:
         return os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "phoneuse")
     base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
@@ -151,8 +155,8 @@ _SCREENS = {
     (428, 926): "13,4 14,3 14,8",
     (393, 852): "15,2 15,4 16,1 17,3",
     (430, 932): "15,3 15,5 16,2 17,4",
-    (402, 874): "17,1 18,1 18,3",
-    (440, 956): "17,2 18,2",
+    (402, 874): "17,1 18,1 18,3 19,2",
+    (440, 956): "17,2 18,2 19,3 19,7",
     (420, 912): "18,4",
 }
 MODEL_POINTS = {f"iPhone{m}": pts for pts, models in _SCREENS.items() for m in models.split()}

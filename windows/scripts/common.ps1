@@ -11,6 +11,8 @@ function Find-Python {
     $ErrorActionPreference = "Continue"
     $candidates = @()
     if ($env:PHONEUSE_PYTHON) { $candidates += $env:PHONEUSE_PYTHON }
+    # The installed/portable app's own Python (windows/scripts/package.ps1), when the caller's $Root is its core\
+    if ($Root -and (Test-Path (Join-Path $Root "python\python.exe"))) { $candidates += Join-Path $Root "python\python.exe" }
     $launcher = (Get-Command py -ErrorAction SilentlyContinue).Source
     if (-not $launcher) {
         $l = Join-Path $env:LOCALAPPDATA "Programs\Python\Launcher\py.exe"

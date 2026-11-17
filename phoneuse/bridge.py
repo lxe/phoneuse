@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import json
 import os
+import platform
 import socket
 import struct
 import subprocess
@@ -112,13 +113,34 @@ def forget(reset=True):
 
 # ---------- 1. firmware over USB ----------
 
+USB_IDS = ((0x1A86, 0x55D4), (0x10C4, 0xEA60), (0x1A86, 0x7523))  # CH9102 (T-Display v1.1), CP210x, CH340
+
+
 def usb_port():
     """The bridge's USB serial port, if one is plugged in (CH9102 / CP210x / CH340)."""
     import serial.tools.list_ports
     for p in serial.tools.list_ports.comports():
-        if (p.vid, p.pid) in ((0x1A86, 0x55D4), (0x10C4, 0xEA60), (0x1A86, 0x7523)):
+        if (p.vid, p.pid) in USB_IDS:
             return p.device
     return None
+
+
+def usb_board_without_driver():
+    """Windows: a board is plugged in but has no working serial driver, so it has no COM port
+    and usb_port() can't see it. Windows may not have one for the T-Display's CH9102 (WCH's
+    CH343 driver, from LilyGO's or WCH's site). False elsewhere, and when it can't tell."""
+    if sys.platform != "win32":
+        return False
+    ids = "|".join(f"USB\\\\VID_{v:04X}&PID_{p:04X}" for v, p in USB_IDS)
+    script = (f"Get-PnpDevice -PresentOnly | Where-Object {{ $_.InstanceId -match '{ids}' }} | "
+              "ForEach-Object { \"$($_.Status) $($_.Class)\" }")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                             capture_output=True, text=True, timeout=10, creationflags=0x08000000).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    found = [line.split() for line in out.splitlines() if line.strip()]
+    return bool(found) and not any(f[:2] == ["OK", "Ports"] for f in found)
 
 
 def idf(*args, port=None):
@@ -129,10 +151,97 @@ def idf(*args, port=None):
     return subprocess.call(["bash", "-c", cmd], cwd=FIRMWARE)
 
 
-# The released firmware (one merged image, flashed at 0x0): the Flatpak ships it, and a
-# checkout can drop one at bridge/build/phoneuse-bridge.bin.
+# Flashing a bridge needs esptool and the firmware, which most people never use: the
+# Windows app doesn't ship them but downloads them here the first time someone flashes a
+# bridge (prepare_flashing): esptool in a venv of its own, and the released image.
+FIRMWARE_RELEASE = ("0.4.3", "b2a524b2600cc210b1b22facbefe3d1c5341443e2c865a66631f393f9463a18e")  # as the Flatpak's
+FIRMWARE_URL = "https://github.com/lxe/phoneuse/releases/download/bridge-firmware-{0}/phoneuse-bridge-{0}.bin"
+ESPTOOL = "esptool==5.6.0"
+
+
+def tools_dir():
+    """Where the downloaded flashing tools live: per user and not roaming (%LOCALAPPDATA% on
+    Windows), or beside the portable Windows app's settings."""
+    if os.environ.get("PHONEUSE_CONFIG_DIR"):
+        return os.path.join(os.environ["PHONEUSE_CONFIG_DIR"], "bridge-tools")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "phoneuse", "bridge-tools")
+    return os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "phoneuse", "bridge-tools")
+
+
+def _tools_python():
+    return os.path.join(tools_dir(), "venv", "Scripts" if sys.platform == "win32" else "bin",
+                        "python.exe" if sys.platform == "win32" else "python")
+
+
+# The released firmware (one merged image, flashed at 0x0): the Flatpak ships it, a checkout
+# can drop one at bridge/build/phoneuse-bridge.bin, and prepare_flashing downloads one.
 RELEASE_FIRMWARE = [os.path.join(p, "phoneuse-bridge.bin") for p in
-                    ("/app/share/phoneuse/firmware", os.path.join(FIRMWARE, "build"))]
+                    ("/app/share/phoneuse/firmware", os.path.join(FIRMWARE, "build"),
+                     os.path.join(tools_dir(), "firmware"))]
+
+
+def esptool_python():
+    """A Python that has esptool: this one (the Flatpak, a checkout's venv), or the tools
+    venv prepare_flashing made. None: it needs preparing."""
+    import importlib.util
+    if importlib.util.find_spec("esptool"):
+        return sys.executable
+    return _tools_python() if os.path.exists(_tools_python()) else None
+
+
+def flashing_ready():
+    return bool(release_firmware()) and bool(esptool_python())
+
+
+def prepare_flashing(step=None):
+    """Download what flashing needs and this copy doesn't have: the released firmware
+    (checked against its SHA-256) and esptool (into a venv of its own; pip builds the few of
+    its packages published only as source, all pure Python). step(text) says what it does.
+    Needs the network once; raises RuntimeError with the reason."""
+    import shutil
+    import urllib.request
+    say = step or (lambda _t: None)
+    if not release_firmware():
+        version, sha = FIRMWARE_RELEASE
+        say(f"Downloading bridge firmware {version}…")
+        d = os.path.join(tools_dir(), "firmware")
+        os.makedirs(d, exist_ok=True)
+        try:
+            with urllib.request.urlopen(FIRMWARE_URL.format(version), timeout=60) as r:
+                data = r.read()
+        except OSError as e:
+            raise RuntimeError(f"couldn't download the bridge firmware: {e}") from None
+        if hashlib.sha256(data).hexdigest() != sha:
+            raise RuntimeError("the downloaded bridge firmware isn't the expected file (SHA-256 differs)")
+        with open(os.path.join(d, "phoneuse-bridge.bin.part"), "wb") as f:
+            f.write(data)
+        os.replace(os.path.join(d, "phoneuse-bridge.bin.part"), os.path.join(d, "phoneuse-bridge.bin"))
+        with open(os.path.join(d, "VERSION"), "w") as f:
+            f.write(version)
+    if not esptool_python():
+        say("Installing esptool (first time only)…")
+        venv = os.path.join(tools_dir(), "venv")
+        shutil.rmtree(venv, ignore_errors=True)  # a half-made one from an earlier try
+        flags = 0x08000000 if sys.platform == "win32" else 0  # no console window
+        for cmd in ([sys.executable, "-m", "venv", venv],
+                    [_tools_python(), "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
+                     "--only-binary=:all:", "--no-binary=esptool,reedsolo,intelhex", ESPTOOL]):
+            r = subprocess.run(cmd, capture_output=True, text=True, creationflags=flags)
+            if r.returncode:
+                shutil.rmtree(venv, ignore_errors=True)
+                why = (r.stderr or r.stdout).strip().splitlines()
+                raise RuntimeError(f"couldn't install esptool: {why[-1] if why else r.returncode}")
+    say("Ready")
+
+
+def remove_flashing_tools():
+    """Delete what prepare_flashing downloaded (the firmware and esptool's venv, ~50 MB), once
+    a bridge is flashed: a bridge is flashed once, so they'd sit there unused. The next flash
+    downloads them again. Firmware that came with this copy (the Flatpak's, a checkout's) stays."""
+    import shutil
+    shutil.rmtree(tools_dir(), ignore_errors=True)
 
 
 def release_firmware():
@@ -169,9 +278,13 @@ def install_firmware(port, progress=None, keep_settings=False):
             with open(part, "wb") as f:
                 f.write(data)
             args += [hex(at), part]
-        cmd = [sys.executable, "-m", "esptool", "--chip", "esp32", "-p", port, "-b", "921600",
+        py = esptool_python()
+        if not py:
+            raise RuntimeError("esptool isn't installed: prepare_flashing() downloads it")
+        cmd = [py, "-m", "esptool", "--chip", "esp32", "-p", port, "-b", "921600",
                "--before", "default-reset", "--after", "hard-reset", "write-flash"] + args
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                creationflags=0x08000000 if sys.platform == "win32" else 0)
         sizes = [len(r[1]) for r in regions]
         written, last, lines = 0, 0.0, []  # written: regions finished ("Wrote ..." lines)
         for line in iter(proc.stdout.readline, ""):
@@ -374,7 +487,7 @@ def nearby(timeout=1.0):
 
 
 def this_pc_name():
-    return (os.uname().nodename or "a computer")[:23]
+    return (platform.node() or "a computer")[:23]  # os.uname() doesn't exist on Windows
 
 
 class Adoption:

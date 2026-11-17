@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build UxPlay (the AirPlay receiver) for Windows in MSYS2's UCRT64 environment and
-# install it to C:\msys64\ucrt64\bin. Run by scripts/windows/install.ps1; to run it by
-# hand, open "MSYS2 UCRT64" and: bash scripts/windows/build-uxplay.sh
+# install it to C:\msys64\ucrt64\bin. Run by windows/scripts/install.ps1; to run it by
+# hand, open "MSYS2 UCRT64" and: bash windows/scripts/build-uxplay.sh
 #
 # Pinned to a commit that was tested with phoneuse. 1.74 has its own mDNS responder,
 # so no Bonjour SDK is needed.

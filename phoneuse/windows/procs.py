@@ -76,5 +76,20 @@ _mutex = None
 def single_instance(name):
     """True if no other process holds the named lock (held until this process ends)."""
     global _mutex
+    if _mutex:  # a handle from an earlier try would keep the lock alive by itself
+        kernel32.CloseHandle(wintypes.HANDLE(_mutex))
     _mutex = kernel32.CreateMutexW(None, False, f"Local\\{name}")
     return bool(_mutex) and ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+
+
+def take_over(name, wait=10.0):
+    """The named lock, once the processes that held it are gone (stale.stop_old stopped them):
+    True when this process holds it within `wait` seconds."""
+    import time
+    deadline = time.time() + wait
+    while True:
+        if single_instance(name):
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.25)

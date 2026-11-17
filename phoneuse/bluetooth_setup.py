@@ -65,7 +65,10 @@ def prepared():
 
 
 def on():
-    return os.path.exists(PC_BLUETOOTH_FLAG)
+    """Whether this PC's own Bluetooth can be the iPhone's keyboard and mouse. On Windows always:
+    the LE service (windows/hid.py) needs no setup and no rights."""
+    import sys
+    return sys.platform == "win32" or os.path.exists(PC_BLUETOOTH_FLAG)
 
 
 def _run_as_admin(script):

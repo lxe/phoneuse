@@ -40,9 +40,31 @@ def window_size():
     return int(height * dw / dh), height + 30  # + the title bar
 
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# A checkout's build (windows\scripts\build-winui.ps1), or in the installed/portable app
+# (windows/scripts/package.ps1) the exe beside core\, which is this phoneuse's root.
+NATIVE = [os.path.join(_ROOT, "windows", "dist", "PhoneUseMirror.exe"),
+          os.path.join(os.path.dirname(_ROOT), "PhoneUseMirror.exe")]
+
+
+def native_window():
+    """The native mirror window (WinUI 3, windows/PhoneUseMirror/), when it's built and not turned off
+    (window = "browser" in config.toml)."""
+    if CFG.get("window", "auto") == "browser":
+        return None
+    return next((p for p in NATIVE if os.path.exists(p)), None)
+
+
 def open_window(url=None):
-    """Open the mirror window. Returns False when no Chromium browser is installed
-    (the caller then opens the page in the default browser)."""
+    """Open the mirror window: the native one when it's built (windows\\scripts\\build-winui.ps1),
+    else the browser mirror in an Edge/Chrome app window. Returns False when neither is
+    available (the caller then opens the page in the default browser)."""
+    exe = native_window()
+    if exe:
+        subprocess.Popen([exe, "--port", str(CFG["web_port"])],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=0x00000008 | 0x00000200)  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        return True
     url = url or f"http://localhost:{CFG['web_port']}/"
     exe = browser()
     if not exe:

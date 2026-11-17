@@ -15,6 +15,12 @@ hid_daemon.py for the commands. Differences that come from Bluetooth LE:
   * Notifications go out once per connection event. phoneuse asks Windows for the
     throughput-optimized connection parameters (iOS settles on 15 ms for HID).
 
+With an ESP32 bridge set up (bridge.py; `bridge IP KEY`, as on Linux), input goes through
+the bridge, over Wi-Fi and then Bluetooth Classic, and this PC's own LE keyboard is closed,
+so the iPhone has one keyboard. If the bridge stops answering for LE_FALLBACK seconds this
+PC's keyboard opens again, so the phone keeps working when the bridge is away. `status` says
+which: link=bridge or link=ble (touch.link() reads it), and le=open|closed.
+
 Run by `phoneuse up` (python -m phoneuse.windows.hid). Local clients connect through
 ipc.py (127.0.0.1 + token).
 """
@@ -49,6 +55,9 @@ CONNECT_WAIT = 8.0  # `connect`: how long to wait for the iPhone to reconnect by
 # the link by itself now and then (measured: bursts of several drops a minute, each
 # back within 0.1-3 s), and an agent's tap shouldn't fail because it landed in one.
 RECONNECT_WAIT = 5.0
+# Bridge mode: how long the bridge may not answer before this PC's own LE keyboard opens
+# again (s). Not shorter: every close and open changes what the paired iPhone sees.
+LE_FALLBACK = float(os.environ.get("PHONEUSE_LE_FALLBACK", "15"))
 STARTED = time.time()  # `status` reports it: phoneuse up warns when hid.py is newer
 # Least ms between reports; None: one connection interval (see BleHid.gap). For tuning.
 PACING_MS = float(os.environ["PHONEUSE_PACING_MS"]) if os.environ.get("PHONEUSE_PACING_MS") else None
@@ -141,12 +150,41 @@ class BleHid:
         self.problem = None  # why the service isn't published, for `status`
         self.generation = 0  # counts publishes, so events from old providers are ignored
         self.readvertising = False
+        self.bridge = None  # bridge.Link while input may go through the ESP32 bridge
+        self.bridge_other = None  # the bridge's phone, when it isn't the mirroring one: nothing goes to it
+        self.bridge_lock = asyncio.Lock()  # bridge reports leave in order, as self.lock keeps LE ones
+        # This PC's own LE keyboard is closed while the bridge carries input (bridge mode), so
+        # the iPhone has one keyboard, not two; it opens again when the bridge is turned off
+        # or stops answering for LE_FALLBACK seconds, so the phone keeps working without it.
+        self.le_wanted = True
+        self.publishing = None  # the task publishing the LE services
 
     # ---------- publishing ----------
+    def le_on(self, why=None):
+        self.le_wanted = True
+        if self.publishing is None or self.publishing.done():
+            if why:
+                log(f"opening this PC's Bluetooth keyboard: {why}")
+            self.publishing = self.loop.create_task(self.start())
+
+    def le_off(self, why):
+        self.le_wanted = False
+        if self.publishing and not self.publishing.done():
+            self.publishing.cancel()
+        self.publishing = None
+        if self.providers or self.ready.is_set():
+            log(f"closing this PC's Bluetooth keyboard: {why}")
+        self.ready.clear()
+        self.problem = None
+        self._teardown()
+
+    def le_open(self):
+        return self.le_wanted
+
     async def start(self):
         """Publish the HID and battery services and advertise, retrying until the
         adapter allows it (Bluetooth may be off)."""
-        while True:
+        while self.le_wanted:
             try:
                 await self._publish()
                 self.problem = None
@@ -272,11 +310,13 @@ class BleHid:
             if advertising(provider):
                 log(f"advertising the {name} service again")
                 return
+            if not self.le_wanted:
+                return
             log("advertising won't start again; publishing the services anew")
             self.ready.clear()
             self._teardown()
             await asyncio.sleep(2)
-            await self.start()
+            self.le_on()
         finally:
             self.readvertising = False
 
@@ -447,10 +487,194 @@ class BleHid:
         intervals = [c.interval_ms for c in self.clients.values() if c.interval_ms]
         return max(intervals or [15.0]) / 1000
 
+    async def wait_bridge_phone(self, seconds):
+        """With this PC's LE keyboard closed only the bridge reaches the phone: wait for it (a
+        bridge standing by connects when mirroring starts), or say why nothing can go."""
+        end = time.perf_counter() + seconds
+        while not self.through_bridge():
+            if self.le_wanted:
+                return False  # the bridge stopped answering and this PC's LE took over
+            if time.perf_counter() >= end or self.bridge_other:
+                raise self.no_bridge_phone()
+            await asyncio.sleep(0.1)
+        return True
+
     async def send(self, report_id, payload):
+        if not self.le_wanted and not self.through_bridge():
+            await self.wait_bridge_phone(RECONNECT_WAIT)
+        if self.through_bridge():
+            async with self.bridge_lock:
+                await asyncio.to_thread(self._bridge_report, report_id, payload)
+            return
         for extra in self.nudge.before(report_id, payload):
             await self._send_through_drops(report_id, extra)
         await self._send_through_drops(report_id, payload)
+
+    # ---------- the ESP32 bridge (bridge.py): the same rules as hid_daemon.py ----------
+    def through_bridge(self):
+        """Input goes through the bridge while it reaches the iPhone; otherwise this PC's
+        own Bluetooth LE carries it, so the phone keeps working when the bridge is away."""
+        return bool(self.bridge) and self.bridge.phone
+
+    def no_bridge_phone(self):
+        if self.bridge_other:
+            return RuntimeError(f"the bridge is connected to {self.bridge_other}, not the mirroring "
+                                f"{self.mirror_name}: nothing was sent. Pair {self.mirror_name} with Phone Use Bridge")
+        return RuntimeError("no iPhone connected to the bridge (pair it with Phone Use Bridge)")
+
+    def _bridge_report(self, report_id, payload, skippable=False):
+        """(a worker thread) One report through the bridge, answered: see hid_daemon HID._bridge."""
+        link = self.bridge
+        if self.bridge_other:  # the bridge holds a phone that isn't mirroring: nothing goes to it
+            raise self.no_bridge_phone()
+        link.drain()  # drag motion still unanswered goes first, so a lift can't overtake it
+        for extra in self.nudge.before(report_id, payload):  # hidproto.AbsoluteNudge
+            link.report(3, extra, False)
+        r = link.report(report_id, payload, skippable)
+        if r == "no phone":
+            raise self.no_bridge_phone()
+        return r == "sent"
+
+    def _bridge_skippable(self, report_id, payload):
+        """(a worker thread) A hover or live motion report: the bridge keeps only the newest
+        hover, and motion goes pipelined. False: not now (the sender keeps the motion)."""
+        link = self.bridge
+        if not link.phone or self.bridge_other:
+            raise self.no_bridge_phone()
+        if report_id == 3:
+            for extra in self.nudge.before(report_id, payload):
+                link.report(3, extra, False)
+            link.send_latest(report_id, payload)
+            return True
+        if link.send_async(report_id, payload):
+            self.nudge.before(report_id, payload)
+            return True
+        return False
+
+    def _bridge_motion(self, payload):
+        """(a worker thread) Scripted motion, pipelined: waiting for each answer (14-35 ms over
+        Wi-Fi) would stretch a 0.3 s flick into a slow drag. Every report still goes, in order."""
+        link, end = self.bridge, time.time() + 0.3
+        self.nudge.before(2, payload)  # relative motion: the next absolute report must differ
+        while not link.send_async(2, payload):
+            if time.time() > end:
+                self._bridge_report(2, payload)
+                return
+            time.sleep(0.002)
+
+    def _bridge_tap(self, fx, fy, hold):
+        """(a worker thread) A whole tap, timed on the bridge, so Wi-Fi can't stretch the hold."""
+        link = self.bridge
+        if not link.phone or self.bridge_other:
+            raise self.no_bridge_phone()
+        for extra in self.nudge.before(3, absolute(fx, fy, 1)):
+            link.report(3, extra, False)
+        link.tap(fx, fy, hold)
+
+    async def set_bridge(self, args):
+        """`bridge IP KEYHEX`: input through the bridge at IP. `bridge off`: back to this PC."""
+        if args[:1] == ["off"] or not args:
+            if self.bridge:
+                self.bridge.close()
+            self.bridge, self.bridge_other = None, None
+            log("bridge off: input goes through this PC's Bluetooth again")
+            self.le_on("the bridge is off")
+            return "bridge off"
+        from ..bridge import Link
+
+        def open_link():
+            link = Link({"ip": args[0], "key": args[1]})
+            try:
+                link.hello()  # raises if it doesn't answer or the key is wrong
+                return link, link.status()
+            except Exception:
+                link.close()  # or every retry leaves a socket and its reader thread behind
+                raise
+        link, st = await asyncio.to_thread(open_link)
+        if self.bridge:
+            self.bridge.close()
+        self.bridge, self.bridge_other = link, None
+        link.phone = bool(st.get("connected"))
+        log(f"bridge on: {args[0]}, phone {st.get('phone') or 'not paired'}")
+        # Bridge mode: the iPhone gets its keyboard from the bridge alone (watch_bridge opens
+        # this PC's again if the bridge stops answering)
+        self.le_off("input goes through the bridge")
+        self.loop.create_task(self.watch_bridge(link))
+        return f"bridge {args[0]} phone={st.get('phone')!r} connected={st.get('connected')}"
+
+    async def watch_bridge(self, link):
+        """Keep the bridge's phone state current, and tell the bridge whether a phone is
+        screen mirroring: it connects to the phone only while one is (firmware 0.4+)."""
+        from ..phones import other_phone
+        from ..screen import airplay_mirroring
+        failing, failing_since, answered, mirroring = None, 0.0, 0, None
+        while True:
+            await asyncio.sleep(2)
+            if self.bridge is not link:  # replaced or turned off: its socket is closed
+                return
+
+            def check():
+                nonlocal mirroring
+                st = link.status()
+                other = other_phone(st.get("phone"), self.mirror_name) if st.get("connected") else None
+                now = airplay_mirroring()
+                if now is not None and now != mirroring:
+                    log("bridge:", "a phone mirrors: connecting" if now else "no phone mirrors: the bridge stands by")
+                mirroring = mirroring if now is None else now
+                phone = bool(st.get("connected")) and not other
+                if link.can_stand_by():
+                    if mirroring is not None:
+                        phone = link.want(mirroring, self.mirror_name) and not other
+                elif not phone and self.mirror_name:
+                    link.connect_phone()
+                return other, phone
+            try:
+                other, phone = await asyncio.to_thread(check)
+                if self.bridge is not link:
+                    return
+                if other != self.bridge_other:
+                    log(f"bridge: connected to {other}, not the mirroring {self.mirror_name}: input off" if other
+                        else "bridge: its phone is the mirroring one")
+                self.bridge_other, link.phone = other, phone
+                if failing:
+                    log("bridge: answering again")
+                    failing = None
+                answered += 1
+                if self.le_wanted and answered >= 3:  # steady again: back to the bridge alone
+                    self.le_off("the bridge answers again")
+            except Exception as e:
+                if self.bridge is not link:
+                    return
+                link.phone = False  # not answering: this PC's Bluetooth LE takes over
+                answered = 0
+                if failing is None:
+                    log("bridge: no answer:", e)
+                    failing_since = time.time()
+                failing = str(e)
+                if not self.le_wanted and time.time() - failing_since >= LE_FALLBACK:
+                    self.le_on(f"the bridge hasn't answered for {LE_FALLBACK:.0f} s")
+
+    async def restore_bridge(self):
+        """The bridge set up in Phone Use (bridge.json), as before a restart; `phoneuse up`
+        tells this service the bridge's current address too, whichever comes first."""
+        from .. import bridge
+        cfg = bridge.saved()
+        if not cfg or not cfg.get("use", True) or not cfg.get("ip"):
+            self.le_on()
+            return
+        # Bridge mode: this PC's LE keyboard isn't opened while the bridge answers at once,
+        # since closing it again right after changes what the paired iPhone sees
+        for attempt in range(10):  # the network may still be coming up
+            if self.bridge:
+                return
+            try:
+                log("restoring bridge:", await self.set_bridge([cfg["ip"], cfg["key"]]))
+                return
+            except Exception as e:  # noqa: BLE001
+                log("bridge not answering yet:", e)
+                if attempt == 0:
+                    self.le_on("the bridge isn't answering yet")
+                await asyncio.sleep(3)
 
     async def _send_through_drops(self, report_id, payload):
         """Send a report; when the link is down, or drops as it goes out, wait for the
@@ -509,7 +733,14 @@ class BleHid:
 
     async def mouse(self, dx=0, dy=0, wheel=0):
         b = lambda v: v & 0xFF
-        await self.send(2, [self.buttons, b(dx), b(dy), b(wheel)])
+        payload = [self.buttons, b(dx), b(dy), b(wheel)]
+        if not self.le_wanted and not self.through_bridge():
+            await self.wait_bridge_phone(RECONNECT_WAIT)
+        if self.through_bridge():
+            async with self.bridge_lock:
+                await asyncio.to_thread(self._bridge_motion, payload)
+            return
+        await self.send(2, payload)
 
     async def move(self, dx, dy, step=8, delay=0.008):
         while dx or dy:
@@ -542,8 +773,14 @@ class BleHid:
         intervals = [c.interval_ms for c in self.clients.values() if c.interval_ms]
         st = self.stats
         avg = st["total_ms"] / max(1, st["sent"] + st["failed"])
-        return (f"connected={bool(self.clients)} released=False peer={names[0] if names else None!r} "
-                f"connected_phones={names} mirror={self.mirror_name!r} link=ble name={self.local_name()!r} "
+        b, via = self.bridge, ""
+        if b:  # motion reports sent to the bridge since it was set, sent again, lost
+            via = (f" bridge={b.addr[0]} bridge_phone={b.phone} bridge_moves={b.counts['async']} "
+                   f"bridge_resent={b.counts['resent']} bridge_lost={b.counts['lost']}")
+        through = self.through_bridge()
+        return (f"connected={through or bool(self.clients)} released=False peer={names[0] if names else None!r} "
+                f"connected_phones={names} mirror={self.mirror_name!r} link={'bridge' if through else 'ble'}{via} "
+                f"name={self.local_name()!r} le={'open' if self.le_wanted else 'closed'} "
                 f"interval_ms={intervals[0] if intervals else None} published={self.ready.is_set()} "
                 f"problem={self.problem!r} notify_avg_ms={avg:.1f} notify_max_ms={st['max_ms']:.1f} "
                 f"waited_for_link={st['waited']} started={STARTED:.0f}")
@@ -554,7 +791,19 @@ class BleHid:
         args = rest.split()
         if cmd == "status":
             return "ok " + self.status()
+        if cmd == "bridge":  # bridge IP KEYHEX | bridge off: send input through the ESP32 bridge
+            return "ok " + await self.set_bridge(args)
         if cmd == "connect":
+            if self.through_bridge():
+                return "ok input goes through the bridge"
+            if self.bridge and not self.bridge_other:  # the bridge pages the phone it is paired with
+                try:
+                    await asyncio.to_thread(self.bridge.connect_phone)
+                except Exception as e:  # noqa: BLE001 - this PC's Bluetooth LE may still do
+                    log("bridge: couldn't ask it to page the phone:", e)
+            if not self.le_wanted:  # bridge mode: only the bridge can reach the phone
+                await self.wait_bridge_phone(CONNECT_WAIT)
+                return "ok input goes through the bridge"
             if self.clients:
                 return "ok already connected"
             try:
@@ -563,6 +812,8 @@ class BleHid:
             except asyncio.TimeoutError:
                 raise RuntimeError(f"no iPhone connected. On the iPhone: Settings > Bluetooth, tap "
                                    f"{self.local_name()} (under My Devices once paired)")
+        if cmd == "gate":  # the browser mirror's agent gate: the Linux daemon enforces it, Windows doesn't yet
+            return "ok"
         if cmd == "mirror":
             self.mirror_name = rest.strip() or None
             log("mirroring phone:", self.mirror_name)
@@ -588,14 +839,35 @@ class BleHid:
             else:
                 await self.consumer(args[0], float(how))
             return "ok"
-        if cmd == "a":
-            await self.send(3, absolute(args[0], args[1], int(args[2]) if len(args) > 2 else 0))
+        if cmd == "tap":  # tap FX FY HOLD: press, hold HOLD seconds, release, as one unit
+            fx, fy = float(args[0]), float(args[1])
+            hold = float(args[2]) if len(args) > 2 else 0.06
+            if self.through_bridge() and await asyncio.to_thread(self.bridge.can_tap):
+                async with self.bridge_lock:
+                    await asyncio.to_thread(self._bridge_tap, fx, fy, hold)
+                await asyncio.sleep(hold + 0.03)  # answer once the release is out, as the local path does
+            else:
+                await self.send(3, absolute(fx, fy, 1))
+                await asyncio.sleep(hold)
+                await self.send(3, absolute(fx, fy, 0))
             return "ok"
-        if cmd == "m":
+        if cmd == "a":
+            buttons = int(args[2]) if len(args) > 2 else 0
+            sure = len(args) > 3 and args[3] == "sure"  # a lift or a pre-press hover: must arrive
+            if self.through_bridge() and not buttons and not self.buttons and not sure:
+                return "ok" if await asyncio.to_thread(self._bridge_skippable, 3, absolute(args[0], args[1], 0)) \
+                    else "ok dropped"
+            await self.send(3, absolute(args[0], args[1], buttons))
+            return "ok"
+        if cmd in ("m", "md"):  # md: a report that may be skipped (live pointer moves)
             dx, dy = (max(-127, min(127, int(v))) for v in args[:2])
             wheel = max(-127, min(127, int(args[2]))) if len(args) > 2 else 0
             if len(args) > 3:
                 self.buttons = int(args[3]) & 0x07
+            if cmd == "md" and self.through_bridge():  # pipelined over Wi-Fi; over LE sent like m
+                sent = await asyncio.to_thread(self._bridge_skippable, 2,
+                                               [self.buttons, dx & 0xFF, dy & 0xFF, wheel & 0xFF])
+                return "ok" if sent else "ok dropped"
             await self.mouse(dx, dy, wheel)
             return "ok"
         if cmd == "k":
@@ -677,7 +949,7 @@ async def amain():
         log(f"another copy of the HID service is running ({e}); leaving Bluetooth to it")
         return
     hid = BleHid(asyncio.get_running_loop())
-    await asyncio.gather(serve(hid, sock), hid.start(), hid.watch_clients())
+    await asyncio.gather(serve(hid, sock), hid.watch_clients(), hid.restore_bridge())
 
 
 def main():

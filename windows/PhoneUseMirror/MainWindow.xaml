@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Window
+    x:Class="PhoneUseMirror.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:PhoneUseMirror"
+    Title="Phone Use">
+    <!-- See-through around the phone (MainWindow.Frameless.cs): only the phone, and its bar above it on hover -->
+    <Grid x:Name="Root" RequestedTheme="Dark" Background="Transparent">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- One attached cap: its lower section fills behind the phone's upper corners. -->
+        <Border x:Name="BarBacking" Grid.RowSpan="2" VerticalAlignment="Top" HorizontalAlignment="Center"
+                CornerRadius="12,12,0,0" IsHitTestVisible="False" />
+        <TitleBar x:Name="AppTitleBar" HorizontalAlignment="Center">
+            <TitleBar.Resources>
+                <!-- Hover reveals the controls at the same brightness even before activation. -->
+                <x:Double x:Key="TitleBarDeactivatedOpacity">1</x:Double>
+            </TitleBar.Resources>
+            <!-- the icon, rounded as everywhere else (scripts/make-icons.py), bigger than the title bar's own
+                 icon slot allows, the app name, and the mirroring status (ShowStatus) -->
+            <TitleBar.LeftHeader>
+                <StackPanel Orientation="Horizontal" Spacing="10" Margin="10,0,0,0" VerticalAlignment="Center"
+                            IsHitTestVisible="False">
+                    <Image Source="ms-appx:///Assets/AppIcon.png" Width="36" Height="36" />
+                    <StackPanel VerticalAlignment="Center" MaxWidth="120">
+                        <TextBlock Text="Phone Use" FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock x:Name="StatusText" FontSize="11" Opacity="0.8" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </StackPanel>
+            </TitleBar.LeftHeader>
+            <TitleBar.RightHeader>
+                <StackPanel x:Name="BarButtons" Orientation="Horizontal" Spacing="2" Margin="0,0,4,0">
+                <Button x:Name="AboutButton" Padding="8,5" Click="OpenAbout_Click"
+                        ToolTipService.ToolTip="About Phone Use" Style="{StaticResource SubtleButtonStyle}">
+                    <FontIcon Glyph="&#xE946;" FontSize="14" />
+                </Button>
+                <Button x:Name="SettingsButton" Padding="8,5" Click="OpenSettings_Click"
+                        ToolTipService.ToolTip="Settings" Style="{StaticResource SubtleButtonStyle}">
+                    <FontIcon Glyph="&#xE713;" FontSize="14" />
+
+                </Button>
+                <!-- no system caption buttons without a frame: its own -->
+                <Button x:Name="BarMinimize" Padding="8,5" Click="BarMinimize_Click"
+                        ToolTipService.ToolTip="Minimize" Style="{StaticResource SubtleButtonStyle}">
+                    <FontIcon Glyph="&#xE921;" FontSize="12" />
+                </Button>
+                <Button x:Name="BarClose" Padding="8,5" Click="BarClose_Click"
+                        ToolTipService.ToolTip="Close" Style="{StaticResource SubtleButtonStyle}">
+                    <FontIcon Glyph="&#xE8BB;" FontSize="12" />
+                </Button>
+                </StackPanel>
+            </TitleBar.RightHeader>
+        </TitleBar>
+
+        <Grid x:Name="Stage" Grid.Row="1" SizeChanged="Stage_SizeChanged">
+            <local:InputSurface x:Name="Surface" HorizontalAlignment="Center" VerticalAlignment="Top">
+                <Grid x:Name="Phone">
+                    <!-- the phone's soft shadow (MainWindow.Frame.cs), cast by ShadowShape, which the phone covers -->
+                    <Canvas x:Name="ShadowHost" IsHitTestVisible="False" />
+                    <Path x:Name="ShadowShape" Fill="Black" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" />
+                    <!-- solid under everything inside the titanium band: the window is see-through, and where two
+                         edges meet at a fraction of a pixel the desktop would show through the seam -->
+                    <Path x:Name="Back" Fill="Black" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" />
+                    <!-- the screen: a plain rectangle; the body drawn over it gives it its corners -->
+                    <Grid x:Name="Screen" Background="Black" HorizontalAlignment="Left" VerticalAlignment="Top">
+                        <!-- a pixel past the screen on every side, under the body: no sliver of background at any size -->
+                        <SwapChainPanel x:Name="Video" Margin="-1" IsHitTestVisible="False" />
+                        <Canvas x:Name="DotLayer" IsHitTestVisible="False">
+                            <Ellipse x:Name="AgentDot" Width="22" Height="22" Visibility="Collapsed"
+                                     Fill="#66FFFFFF" Stroke="White" StrokeThickness="2" />
+                        </Canvas>
+                        <Border x:Name="NoteBox" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                                Background="#CC1C1C1E" CornerRadius="14" Padding="18,14" Visibility="Collapsed"
+                                IsHitTestVisible="False">
+                            <TextBlock x:Name="NoteText" TextWrapping="Wrap" TextAlignment="Center"
+                                       Foreground="#EBEBF5" FontSize="14" LineHeight="20" />
+                        </Border>
+                    </Grid>
+
+                    <!-- This window's own things, on the phone's screen and under its body, so they get its corners
+                         (placed with the screen in Layout). Presses on them stay here, never reaching the phone. -->
+                    <Grid x:Name="ScreenUi" HorizontalAlignment="Left" VerticalAlignment="Top">
+                        <!-- notices, below the Dynamic Island (the AssistiveTouch reminder is a setup step) -->
+                        <StackPanel x:Name="Bars" VerticalAlignment="Top" Margin="10,0,10,0" Spacing="6">
+                            <!-- while no iPhone app is paired: phoneuse refuses every agent action until one is -->
+                            <InfoBar x:Name="PairingBar" IsOpen="False" IsClosable="True" Severity="Informational"
+                                     Title="Agent control requires pairing"
+                                     Message="AI agents can't use the phone until you pair the Phone Use app (App Store) on the iPhone: it's where you allow and stop them."
+                                     Closed="PairingBar_Closed">
+                                <InfoBar.ActionButton>
+                                    <Button Content="Pair iPhone" Click="Pair_Click" />
+                                </InfoBar.ActionButton>
+                            </InfoBar>
+                            <!-- a newer release on GitHub (MainWindow.Update.cs) -->
+                            <InfoBar x:Name="UpdateNotice" IsOpen="False" IsClosable="True" Severity="Success"
+                                     Closed="UpdateNotice_Closed">
+                                <InfoBar.ActionButton>
+                                    <Button x:Name="UpdateNoticeButton" Content="Install" Click="UpdateButton_Click" />
+                                </InfoBar.ActionButton>
+                            </InfoBar>
+                        </StackPanel>
+
+                        <!-- first-time setup hidden but not finished -->
+                        <Button x:Name="SetupResume" Click="SetupResume_Click" HorizontalAlignment="Center" VerticalAlignment="Top"
+                                CornerRadius="16" Padding="14,6" Visibility="Collapsed"
+                                Style="{StaticResource AccentButtonStyle}" />
+
+                        <!-- while an agent has the phone (or you took it back): who, and the way to switch -->
+                        <StackPanel x:Name="AgentPanel" HorizontalAlignment="Center" VerticalAlignment="Bottom" Spacing="6"
+                                    Visibility="Collapsed">
+                            <TextBlock x:Name="AgentWhat" HorizontalAlignment="Center" Margin="16,0,16,0"
+                                       Foreground="#CCEBEBF5" FontSize="12" TextTrimming="CharacterEllipsis" />
+                            <Button x:Name="TakeoverButton" Click="Takeover_Click" HorizontalAlignment="Center"
+                                    CornerRadius="16" Padding="14,6" Background="#E61C1C1E">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Ellipse x:Name="AgentLight" Width="8" Height="8" Fill="#30D158" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="TakeoverLabel" Text="You're in control" />
+                                    <TextBlock x:Name="TakeoverAction" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+
+                        <!-- first-time setup (MainWindow.Setup.cs): the phone's screen until it's done or hidden -->
+                        <!-- a pixel past the screen on every side, as the video: no lighter seam against the body at any size -->
+                        <Grid x:Name="SetupOverlay" Background="#FF0F0F11" Visibility="Collapsed" Margin="-1">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="SetupBody" Padding="16,4,16,24" Spacing="10" />
+                            </ScrollViewer>
+                        </Grid>
+
+                        <!-- About Phone Use, and the bridge's page: the phone's screen (the bar's (i), or the tray menu) -->
+                        <Grid x:Name="AboutOverlay" Background="#FF0F0F11" Visibility="Collapsed" Margin="-1" KeyDown="AboutOverlay_KeyDown">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Button x:Name="AboutBack" Click="AboutBack_Click" Style="{StaticResource SubtleButtonStyle}"
+                                    Margin="16,0,8,4" Padding="8,5" HorizontalAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE72B;" FontSize="14" />
+                                    <TextBlock Text="Back to the phone" />
+                                </StackPanel>
+                            </Button>
+                        <Grid x:Name="SettingsPage" Grid.Row="1" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="16,8,16,12" />
+                            <TabView x:Name="SettingsTabs" Grid.Row="1" SelectionChanged="SettingsTab_Changed" IsAddTabButtonVisible="False" TabWidthMode="Equal"
+                                     CanDragTabs="False" CanReorderTabs="False">
+                                <TabViewItem IsClosable="False">
+                                    <TabViewItem.Header>
+                                        <TextBlock Text="General" FontSize="12" />
+                                    </TabViewItem.Header>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Padding="16,8,16,28" Spacing="6">
+                                            <ToggleSwitch x:Name="AwakeSwitch" Header="Keep screen awake"
+                                                          OnContent="On" OffContent="Off" Toggled="Awake_Toggled" />
+                                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7" TextWrapping="Wrap"
+                                                       Text="Nudges the pointer about once a second while nobody else uses the phone, so Auto-Lock never fires." />
+
+                                            <ToggleSwitch x:Name="StartupSwitch" Header="Start with Windows" Margin="0,14,0,0"
+                                                          OnContent="On" OffContent="Off" Toggled="Startup_Toggled" />
+                                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7" TextWrapping="Wrap"
+                                                       Text="Starts phoneuse when you sign in, with Phone Use waiting in the tray." />
+
+                                            <ToggleSwitch x:Name="SnapSwitch" Header="Keep above the tray icon" Margin="0,14,0,0"
+                                                          OnContent="On" OffContent="Off" Toggled="Snap_Toggled" />
+                                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7" TextWrapping="Wrap"
+                                                       Text="Opens above Phone Use's tray icon, on top of other windows. Drag the bar to take it anywhere; drop it near the tray to put it back." />
+
+                                            <StackPanel x:Name="PasscodeSection" Spacing="6" Visibility="Collapsed">
+                                                <TextBlock Text="Passcode" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <PasswordBox x:Name="PasscodeBox" PlaceholderText="Enter passcode" InputScope="NumericPin"
+                                                                 PasswordChanged="Passcode_Changed" KeyDown="Passcode_KeyDown" />
+                                                    <Button x:Name="PasscodeSave" Grid.Column="1" Content="Save" IsEnabled="False"
+                                                            Click="PasscodeSave_Click" Style="{StaticResource AccentButtonStyle}" />
+                                                </Grid>
+                                                <Button x:Name="PasscodeRemove" Content="Remove Passcode" Foreground="#FF453A"
+                                                        Click="PasscodeRemove_Click" Visibility="Collapsed" />
+                                                <TextBlock x:Name="PasscodeError" Foreground="#FF453A" TextWrapping="Wrap"
+                                                           Style="{StaticResource CaptionTextBlockStyle}" Visibility="Collapsed" />
+                                            </StackPanel>
+
+                                            <!-- the installed and portable app only (Updater.Mode) -->
+                                            <StackPanel x:Name="UpdateSection" Spacing="6">
+                                                <TextBlock Text="Updates" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                <TextBlock x:Name="UpdateText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"
+                                                           TextWrapping="Wrap" />
+                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                    <Button x:Name="UpdateButton" Content="Check for updates" Click="UpdateButton_Click" />
+                                                    <ProgressRing x:Name="UpdateRing" Width="20" Height="20" IsActive="False"
+                                                                  Visibility="Collapsed" />
+                                                </StackPanel>
+                                                <CheckBox x:Name="UpdateAuto" Content="Check automatically" Click="UpdateAuto_Click" />
+                                            </StackPanel>
+
+                                            <HyperlinkButton Content="Setup guide" Margin="0,12,0,0" Padding="0" Click="SetupGuide_Click" />
+                                            <HyperlinkButton x:Name="OpenBrowser" Content="Open the browser mirror"
+                                                             Padding="0" Click="OpenBrowser_Click" />
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                                <TabViewItem x:Name="AgentControlTab" IsClosable="False">
+                                    <TabViewItem.Header>
+                                        <TextBlock Text="Agent Control" FontSize="12" />
+                                    </TabViewItem.Header>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Padding="16,8,16,28" Spacing="6">
+                                            <TextBlock Text="iPhone app" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock x:Name="PairedText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"
+                                                       TextWrapping="Wrap" />
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <Button x:Name="PairButton" Content="Pair iPhone" Click="Pair_Click"
+                                                        Style="{StaticResource AccentButtonStyle}" />
+                                                <Button x:Name="UnpairButton" Content="Unpair" Click="Unpair_Click" Visibility="Collapsed" />
+                                            </StackPanel>
+
+                                            <TextBlock Text="Agent control" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <ComboBox x:Name="StartMode" HorizontalAlignment="Stretch" SelectionChanged="StartMode_Changed">
+                                                <ComboBoxItem Content="Always" Tag="auto" />
+                                                <ComboBoxItem Content="After a delay" Tag="countdown" />
+                                                <ComboBoxItem Content="Ask every time" Tag="ask" />
+                                            </ComboBox>
+                                            <ComboBox x:Name="StartSeconds" Header="Delay" HorizontalAlignment="Stretch"
+                                                      Visibility="Collapsed" SelectionChanged="StartSeconds_Changed">
+                                                <ComboBoxItem Content="5 s" Tag="5" />
+                                                <ComboBoxItem Content="10 s" Tag="10" />
+                                                <ComboBoxItem Content="15 s" Tag="15" />
+                                                <ComboBoxItem Content="30 s" Tag="30" />
+                                            </ComboBox>
+
+                                            <!-- the light around the phone while an agent drives (MainWindow.Glow.cs); lit while the Agent Control tab is open -->
+                                            <ToggleSwitch x:Name="GlowSwitch" Header="Agent glow" Margin="0,14,0,0"
+                                                          OnContent="On" OffContent="Off" Toggled="Glow_Toggled" />
+                                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7" TextWrapping="Wrap"
+                                                       Text="Light around the phone while an agent uses it, amber when you take over. Previewed while the Agent Control tab is open." />
+                                            <TextBlock x:Name="GlowUnavailable" Style="{StaticResource CaptionTextBlockStyle}" Foreground="#FF9F0A"
+                                                       TextWrapping="Wrap" Visibility="Collapsed"
+                                                       Text="The graphics card couldn't start the glow: a plain ring shows instead." />
+                                            <StackPanel x:Name="GlowOptions" Spacing="2">
+                                                <Slider x:Name="GlowIntensity" Header="Intensity" Minimum="0.2" Maximum="1.6" StepFrequency="0.01"
+                                                        ValueChanged="GlowLook_Changed" />
+                                                <Slider x:Name="GlowSpeed" Header="Speed" Minimum="0.2" Maximum="3" StepFrequency="0.01"
+                                                        ValueChanged="GlowLook_Changed" />
+                                                <Slider x:Name="GlowSize" Header="Glow size" Minimum="0.3" Maximum="2.5" StepFrequency="0.01"
+                                                        ValueChanged="GlowLook_Changed" />
+                                                <CheckBox x:Name="GlowBleed" Content="Light spills onto the screen edge"
+                                                          Click="GlowLook_Changed" />
+                                                <HyperlinkButton Content="Reset to default" Padding="0" Click="GlowReset_Click" />
+                                            </StackPanel>
+
+                                            <TextBlock Text="Screen reading" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock x:Name="VisionText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"
+                                                       TextWrapping="Wrap" />
+                                            <!-- while installing: the current download's bytes, else indeterminate -->
+                                            <ProgressBar x:Name="VisionProgress" Maximum="1" Visibility="Collapsed" Margin="0,2,0,2" />
+                                            <TextBlock x:Name="VisionDetail" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"
+                                                       TextWrapping="Wrap" Visibility="Collapsed" />
+                                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                                <Button x:Name="VisionButton" Content="Install" Click="Vision_Click" />
+                                                <ProgressRing x:Name="VisionRing" Width="20" Height="20" IsActive="False"
+                                                              Visibility="Collapsed" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                                <!-- the phone frame's colour (MainWindow.Finish.cs) -->
+                                <TabViewItem IsClosable="False">
+                                    <TabViewItem.Header>
+                                        <TextBlock Text="Appearance" FontSize="12" />
+                                    </TabViewItem.Header>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Padding="16,8,16,28" Spacing="2">
+                                            <TextBlock Text="Frame colour" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock x:Name="FinishName" Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="Wrap" />
+                                            <StackPanel x:Name="FinishGroups" />
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                                <TabViewItem IsClosable="False">
+                                    <TabViewItem.Header>
+                                        <TextBlock Text="Bluetooth" FontSize="12" />
+                                    </TabViewItem.Header>
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                        <StackPanel Padding="16,8,16,28" Spacing="6">
+                                            <TextBlock Text="Bluetooth bridge" Margin="0,14,0,0" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <!-- on while this PC's Bluetooth carries input; off: the bridge does. Greyed out (and on)
+                                                 until a bridge is set up and answering -->
+                                            <ToggleSwitch x:Name="BridgeSwitch" Header="Use this PC's Bluetooth"
+                                                          OnContent="On" OffContent="Off" IsOn="True"
+                                                          IsEnabled="False" Toggled="Bridge_Toggled" />
+                                            <TextBlock x:Name="BridgeText" Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"
+                                                       TextWrapping="Wrap" Text="Checking for a bridge…" />
+                                            <Button x:Name="BridgeButton" Content="Bridge Settings" Click="BridgeSettings_Click" />
+                                        </StackPanel>
+                                    </ScrollViewer>
+                                </TabViewItem>
+                            </TabView>
+                        </Grid>
+                            <ContentControl x:Name="AboutHost" Grid.Row="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                            HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" IsTabStop="False" />
+                        </Grid>
+                        <Border x:Name="SnapReady" Visibility="Collapsed" HorizontalAlignment="Center"
+                                VerticalAlignment="Center" Background="#F21C1C1E" BorderBrush="#60D0FF"
+                                BorderThickness="2" CornerRadius="14" Padding="16,10" IsHitTestVisible="False">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE718;" Foreground="#60D0FF" FontSize="16" />
+                                <TextBlock Text="Release to snap to tray" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- An iPhone drawn over the screen's edges (Layout): side buttons, a thin titanium band,
+                         and a thin black border around the glass with the screen's squircle cut out. -->
+                    <!-- filled in the chosen finish (MainWindow.Finish.cs) -->
+                    <Path x:Name="Buttons" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" />
+                    <!-- Camera Control: sapphire, dark and glossy whatever the finish -->
+                    <Path x:Name="CameraControl" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
+                        <Path.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#FF141416" Offset="0" />
+                                <GradientStop Color="#FF4C4C54" Offset="0.5" />
+                                <GradientStop Color="#FF141416" Offset="1" />
+                            </LinearGradientBrush>
+                        </Path.Fill>
+                    </Path>
+                    <!-- the plain band: shown only if the lit one (BandImage) can't be drawn -->
+                    <Path x:Name="Titanium" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False"
+                          Stroke="#59FFFFFF" StrokeThickness="0.75" />
+                    <Image x:Name="BandImage" Stretch="Fill" HorizontalAlignment="Left" VerticalAlignment="Top"
+                           IsHitTestVisible="False" Visibility="Collapsed" />
+                    <Path x:Name="Body" Fill="#FF050506" HorizontalAlignment="Left" VerticalAlignment="Top"
+                          IsHitTestVisible="False" />
+                    <Path x:Name="GlassEdge" StrokeThickness="0.8" HorizontalAlignment="Left" VerticalAlignment="Top"
+                          IsHitTestVisible="False">
+                        <Path.Stroke>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#50FFFFFF" Offset="0" />
+                                <GradientStop Color="#12FFFFFF" Offset="0.5" />
+                                <GradientStop Color="#2AFFFFFF" Offset="1" />
+                            </LinearGradientBrush>
+                        </Path.Stroke>
+                    </Path>
+                    <!-- a ring around the screen while an agent drives -->
+                    <Path x:Name="Rim" Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="2"
+                          HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Collapsed"
+                          IsHitTestVisible="False" />
+                </Grid>
+            </local:InputSurface>
+        </Grid>
+    </Grid>
+</Window>

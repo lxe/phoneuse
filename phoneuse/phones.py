@@ -82,19 +82,29 @@ def entry(name=None):
     return load().get(name, {}) if name else {}
 
 
+def drag_key(link):
+    """Where a phone's drag table for this link is kept. A table measured over one link is
+    wrong for the other (Bluetooth LE moves ~10x less per report than Classic). Linux is
+    always Classic, and Windows was always LE until the bridge, so "drag_pts" stays what
+    each wrote before; Windows' tables over the bridge (Classic) go in drag_pts_classic."""
+    from .config import IS_WINDOWS
+    return "drag_pts_classic" if IS_WINDOWS and link == "classic" else "drag_pts"
+
+
 def needs_calibration(name=None):
-    """Whether this phone should be measured on connect: it has no table of its own
-    and isn't the model that touch.REF_PTS was measured on. Over Bluetooth LE
-    (Windows) no phone is: that table was measured over Classic."""
-    from .touch import LINK, REF_MODEL
-    e = entry(name)
-    return not e.get("drag_pts") and (LINK == "ble" or e.get("model") != REF_MODEL)
+    """Whether this phone should be measured on connect: it has no table of its own for
+    the link in use and isn't the model that touch.REF_PTS was measured on. Over
+    Bluetooth LE (Windows) no phone is: that table was measured over Classic."""
+    from .touch import REF_MODEL, link
+    e, now = entry(name), link()
+    return not e.get(drag_key(now)) and (now == "ble" or e.get("model") != REF_MODEL)
 
 
 def save_calibration(name, table):
+    from .touch import link
     phones = load()
     e = phones.setdefault(name, {"first_seen": time.strftime("%Y-%m-%d %H:%M")})
-    e["drag_pts"] = [[u, p] for u, p in table]
+    e[drag_key(link())] = [[u, p] for u, p in table]
     e["calibrated"] = time.strftime("%Y-%m-%d %H:%M")
     _write(phones)
 

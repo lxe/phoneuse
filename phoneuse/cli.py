@@ -6,6 +6,7 @@ Setup and running:
                                bluetoothd config. Windows: UxPlay, the firewall rule
                                (asks for admin once). Both: the local vision models
   phoneuse doctor               check every part of the setup and say how to fix it
+  phoneuse claude [connect|disconnect]  Claude Code: the phoneuse skill and command (state)
   phoneuse up                   mirror window + mouse control (click/drag on the mirror)
   phoneuse down                 Windows: also stop the Bluetooth keyboard and mouse, which
                                keep running after `up` stops (see up_windows)
@@ -90,31 +91,52 @@ import threading
 import time
 import urllib.request
 
-from . import calibrate, config, hidproto, ipc, phones, screen, touch
-from .config import CFG, HID_SOCKET, IS_WINDOWS, MACOS, NAME, RUNTIME_DIR, SCREEN_PT, VISION_SOCKET, runtime_path
+from . import calibrate, config, hidproto, ipc, orientation, phones, screen, touch
+from .config import CFG, HID_SOCKET, IS_WINDOWS, MACOS, NAME, RUNTIME_DIR, VISION_SOCKET, runtime_path
 from .hidclient import Hid
 
 PKG = os.path.dirname(os.path.realpath(__file__))
-ROOT = os.path.dirname(PKG)  # the repository checkout
+ROOT = os.path.dirname(PKG)  # the repository checkout, or the Windows app's core\ folder
+# The installed or portable Windows app (windows/scripts/package.ps1): ROOT is core\, beside the window's exe.
+# It ships everything install.ps1 would set up except the firewall rule (and the optional vision models).
+APP = IS_WINDOWS and os.path.isfile(os.path.join(os.path.dirname(ROOT), "PhoneUseMirror.exe"))
 WEB_PORT = int(CFG["web_port"])
 
-PT = SCREEN_PT
 LAST_ACTION = runtime_path("phoneuse-last-action")
 
 
 def uxplay_path():
     """The AirPlay receiver: `uxplay` on the PATH, or on Windows the MSYS2 build
-    (scripts/windows/build-uxplay.sh), unless config.toml names one."""
+    (windows/scripts/build-uxplay.sh), unless config.toml names one."""
     if os.environ.get("PHONEUSE_UXPLAY"):  # the app's own UxPlay (the Mac bundle's)
         return os.environ["PHONEUSE_UXPLAY"]
     if CFG.get("uxplay", "auto") != "auto":
         return CFG["uxplay"]
-    if IS_WINDOWS:
-        for p in (r"C:\msys64\ucrt64\bin\uxplay.exe", shutil.which("uxplay")):
+    if IS_WINDOWS:  # the installed/portable app's own (windows/scripts/package.ps1), then the MSYS2 build
+        for p in (os.path.join(ROOT, "uxplay", "bin", "uxplay.exe"), r"C:\msys64\ucrt64\bin\uxplay.exe",
+                  shutil.which("uxplay")):
             if p and os.path.exists(p):
                 return p
         return None
     return shutil.which("uxplay") or "uxplay"
+
+
+def install_app(args):
+    """`phoneuse install` in the installed or portable Windows app, which has no install.ps1: the
+    one thing it can't ship is the firewall rule that lets the iPhone reach UxPlay (one UAC prompt);
+    the screen-reading models stay optional (-NoVision, as install.ps1 takes)."""
+    if "-NoFirewall" not in args:
+        script = os.path.join(ROOT, "windows", "scripts", "firewall.ps1")
+        # Start-Process -Verb RunAs: elevated, and -Wait for its exit code
+        cmd = (f"$p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList "
+               f"'-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -Program \"{uxplay_path()}\"'; exit $p.ExitCode")
+        rc = subprocess.run(["powershell", "-NoProfile", "-Command", cmd]).returncode
+        print("Firewall rule for UxPlay:", "added" if rc == 0 else f"not added (exit {rc})")
+    if "-NoVision" not in args and not os.path.exists(os.path.join(ROOT, ".venv-vision")):
+        print("Screen-reading models (optional, a few GB): the Phone Use window's settings, or\n"
+              "  powershell -ExecutionPolicy Bypass -File \"" + os.path.join(ROOT, "windows", "scripts", "setup-vision.ps1") + '"')
+    from . import doctor
+    return doctor.main([])
 
 
 def device_id():
@@ -173,7 +195,7 @@ def uxplay_args():
 
 
 # UxPlay buffers its output when it goes to a pipe; stdbuf makes it line-buffered.
-# (The Windows build turns buffering off itself: scripts/windows/build-uxplay.sh.)
+# (The Windows build turns buffering off itself: windows/scripts/build-uxplay.sh.)
 UNBUFFERED = ["stdbuf", "-oL", "-eL"] if not IS_WINDOWS and shutil.which("stdbuf") else []
 UXPLAY_LOG = runtime_path("phoneuse-uxplay.log")
 MIRRORING_PHONE = runtime_path("mirroring-phone")  # name of the phone that last started mirroring
@@ -272,7 +294,8 @@ def point(xs, ys):
     """Parse a coordinate pair: fractions, or iPhone points if either is > 1."""
     x, y = float(xs), float(ys)
     if x > 1 or y > 1:
-        x, y = x / PT[0], y / PT[1]
+        pw, ph = orientation.current_points()
+        x, y = x / pw, y / ph
     if not (0 <= x <= 1 and 0 <= y <= 1):
         die(f"coordinate out of range: {xs} {ys}")
     return x, y
@@ -470,8 +493,9 @@ class AgentHid:
                 if mag:
                     moved = touch.points_for(mag)
                     x, y, down = self.dot
-                    self.dot = (min(max(x + moved * ux / mag / SCREEN_PT[0], 0.0), 1.0),
-                                min(max(y + moved * uy / mag / SCREEN_PT[1], 0.0), 1.0), down)
+                    pw, ph = orientation.current_points()
+                    self.dot = (min(max(x + moved * ux / mag / pw, 0.0), 1.0),
+                                min(max(y + moved * uy / mag / ph, 0.0), 1.0), down)
                     self.dots.show(self.dot)
         except (IndexError, ValueError):
             pass
@@ -542,7 +566,7 @@ def settle():
         # (Windows; iPhone 14 Pro Max, iOS 26.5) the Home key's first change came up to 0.9 s after it
         # and a tap's hover highlight came before its page transition with a short gap, so LE waits
         # at least 1.5 s for the change and wants 0.25 s of stillness.
-        le = touch.LINK == "ble"
+        le = touch.link() == "ble"
         wait = max(REACT_WAIT, 1.5) if le else REACT_WAIT
         quiet = 0.25 if le else 0.1
         req = f"settle {since} {quiet} {wait:.1f}" if since is not None else "settle"
@@ -575,7 +599,7 @@ def key_combo(h, combo):
 # ---------- gestures and recipes (recipes.py; verified on iOS 26) ----------
 
 def home(h):
-    if touch.LINK == "ble":
+    if touch.link() == "ble":
         return _home_ble(h)
     h.cmd("key h gui")
 
@@ -605,7 +629,8 @@ def gesture_point(xs, ys):
     """point(), for gesture steps: an error the caller reports instead of an exit."""
     x, y = float(xs), float(ys)
     if x > 1 or y > 1:
-        x, y = x / PT[0], y / PT[1]
+        pw, ph = orientation.current_points()
+        x, y = x / pw, y / ph
     if not (0 <= x <= 1 and 0 <= y <= 1):
         raise touch.GestureError(f"position out of range: {xs} {ys}")
     return x, y
@@ -700,7 +725,7 @@ def scroll(h, direction, n=1.0):
     """Scroll the content by n half-screens (0.45 of the screen height each)."""
     # In points: scroll_by reads a value above 1 as points, so 3 or more half-screens
     # given as a fraction (1.35) scrolled 1.35 pt, which is nothing.
-    pts = 0.45 * n * SCREEN_PT[1]
+    pts = 0.45 * n * orientation.current_points()[1]
     scroll_by(h, pts if direction == "down" else -pts)
 
 
@@ -709,14 +734,15 @@ def scroll_by(h, dy, x=0.5):
     shows what is below. A drag that slows down before it lifts, so iOS doesn't
     fling and the content stops where the finger lifts; long scrolls take
     several drags."""
+    ph = orientation.current_points()[1]
     if abs(dy) > 1:
-        dy /= SCREEN_PT[1]
+        dy /= ph
     # Equal drags of at most 0.7: splitting 0.72 into 0.7 + 0.02 left a 17 pt drag
     # at the end, short enough for iOS to read as a tap on whatever was there.
     n = max(1, math.ceil(abs(dy) / 0.7 - 1e-9))
     d = abs(dy) / n
     if d <= 0.005:
-        die(f"Not scrolled: {abs(dy) * SCREEN_PT[1]:.1f} pt is too little to scroll. scroll-by takes a "
+        die(f"Not scrolled: {abs(dy) * ph:.1f} pt is too little to scroll. scroll-by takes a "
             "screen fraction up to 1, or phone points above 1.")
     for _ in range(n):
         y0, y1 = (0.85, 0.85 - d) if dy > 0 else (0.15, 0.15 + d)
@@ -733,7 +759,7 @@ def step(h, command, quiet=0.1, change=None):
     frames service), instead of a fixed pause. `quiet`: how long the picture
     must stay still, longer where results stream in (search)."""
     if change is None:  # the first change's wait: 0.6 s, or 1 s over Bluetooth LE (slower to show)
-        change = 1.0 if touch.LINK == "ble" else 0.6
+        change = 1.0 if touch.link() == "ble" else 0.6
     seq = frame_seq()
     steplog("send", command)
     h.cmd(command)
@@ -890,7 +916,7 @@ def awake_cmd(arg):
 
 
 def open_app(h, name):
-    if touch.LINK == "ble":
+    if touch.link() == "ble":
         return _open_app_ble(h, name)
     step(h, "key h gui", change=0.3)  # often already home (no change); also wakes a locked phone
     refuse_if_locked()
@@ -1085,7 +1111,7 @@ def spotlight_hit(name):
         lines = screen_text()
     except SystemExit:
         return None
-    return spotlight_tap(lines, name, PT[1])
+    return spotlight_tap(lines, name, orientation.current_points()[1])
 
 
 def spotlight_tap(lines, name, screen_h_pt):
@@ -1207,7 +1233,8 @@ def screenshot(path):
     img = Image.open(io.BytesIO(png))
     save_look(img.convert("RGB"))
     w, hgt = img.size
-    print(f"{path} ({w}x{hgt} px = {PT[0]}x{PT[1]} pt; tap with fractions of this image or points)")
+    pw, ph = orientation.current_points()
+    print(f"{path} ({w}x{hgt} px = {pw}x{ph} pt; tap with fractions of this image or points)")
 
 
 # ---------- vision (OCR, see vision.py) ----------
@@ -1227,9 +1254,8 @@ def vision_python():
         return sys.executable
     if os.environ.get("FLATPAK_ID") and importlib.util.find_spec("rapidocr"):
         return sys.executable  # the app's RapidOCR, even when the code comes from a checkout (dev-link.sh)
-    py = os.path.join(ROOT, ".venv-vision", "bin", "python")
-    if os.path.exists(py):
-        return py
+    if os.path.exists(VISION_PY):  # .venv-vision's Python: bin/python, or Scripts\python.exe on Windows
+        return VISION_PY
     return sys.executable if importlib.util.find_spec("rapidocr") else None
 
 
@@ -1247,7 +1273,7 @@ def vision(req, timeout=90):
         pass
     py = vision_python()
     if not py:
-        die("Vision models aren't installed. Run: " + (r"scripts\windows\setup-vision.ps1" if IS_WINDOWS
+        die("Vision models aren't installed. Run: " + (r"windows\scripts\setup-vision.ps1" if IS_WINDOWS
                                                        else f"{ROOT}/scripts/setup-vision.sh"))
     logf = open(VISION_LOG, "a")
     if IS_WINDOWS:  # detached, no console window; it outlives this command and keeps the models loaded
@@ -1391,7 +1417,7 @@ def tap_on(h, what, force=False):
 def up(headless=False):
     """Run everything. headless (`phoneuse serve`): no mirror window, so no Hyprland;
     the phone is watched and used in the browser mirror."""
-    return up_windows() if IS_WINDOWS else up_linux(headless)
+    return up_windows(headless) if IS_WINDOWS else up_linux(headless)
 
 
 HID_LOG = runtime_path("phoneuse-hid.log")
@@ -1401,17 +1427,29 @@ HID_SOURCES = ("windows/hid.py", "hidproto.py", "ipc.py")
 def hid_status():
     """The HID service's status line, or None when it isn't running."""
     try:
-        return ipc.request("hid", "status", timeout=3)[0]
+        reply = ipc.request("hid", "status", timeout=3)[0]
+        return reply if reply.startswith("ok ") else None
     except OSError:
         return None
 
 
 # Started by a short-lived middle process, so the HID service has no living parent:
 # stopping `phoneuse up` with its process tree (taskkill /T, as tools do) can't reach it.
+# It can itself be in a job that refuses CREATE_BREAKAWAY_FROM_JOB (Access is denied) even when
+# start_hid's breakaway worked: it then starts the service inside, as start_hid falls back to.
+# Its own errors go to the HID log (its stderr is DEVNULL), so a service that never starts says why.
 _SPAWN = ("import subprocess, sys\n"
           "log = open(sys.argv[1], 'a', encoding='utf-8')\n"
-          "subprocess.Popen(sys.argv[3:], stdout=log, stderr=log, stdin=subprocess.DEVNULL,"
-          " creationflags=int(sys.argv[2]))\n")
+          "sys.stderr = log\n"
+          "flags = int(sys.argv[2])\n"
+          "def start(f):\n"
+          "    subprocess.Popen(sys.argv[3:], stdout=log, stderr=log, stdin=subprocess.DEVNULL, creationflags=f)\n"
+          "try:\n"
+          "    start(flags)\n"
+          "except OSError:\n"
+          "    if not flags & 0x01000000:\n"
+          "        raise\n"
+          "    start(flags & ~0x01000000)\n")
 
 
 def start_hid():
@@ -1669,20 +1707,104 @@ def stop_vision():
         pass  # not running
 
 
-def up_windows():
+def backend_answers():
+    """Windows: the running backend's services answer (the video hub and the browser mirror),
+    not only hold their ports."""
+    try:
+        if not screen.hub_request("status", timeout=2)[0].startswith("ok"):
+            return False
+        urllib.request.urlopen(f"http://127.0.0.1:{WEB_PORT}/api/picture", timeout=3).read()
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def hub_port_taken():
+    """Windows: a backend runs, whoever started it: the hub's video port (UDP) is taken. Unlike
+    the up lock, this is seen from inside a sandbox too (an agent's tool sandbox has its own
+    lock namespace, so a `phoneuse up` there got "the lock" beside a running backend and started
+    services that crashed on their taken ports)."""
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.bind(("127.0.0.1", screen.HUB_RTP_PORT))
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+
+
+SANDBOXED = ("phoneuse can't reach its services: this process isn't allowed to connect to 127.0.0.1 "
+             "(WinError 10013), as in an agent's sandbox (Codex's, for one). phoneuse itself is most likely "
+             "running fine; don't start it again. Run phoneuse with local network access: allow it for the "
+             "sandbox, or run the command outside it.")
+
+
+def can_reach_services():
+    """Windows: this process may connect to the services' local ports. A sandbox that blocks
+    local connections refuses them outright (WinError 10013, PermissionError)."""
+    try:
+        ipc._tcp(config.SERVICE_PORTS["hub"], 1).close()
+    except PermissionError:
+        return False
+    except OSError:
+        pass  # nobody listening is still reachable
+    return True
+
+
+def wait_hub_port_free(wait=10.0):
+    deadline = time.time() + wait
+    while hub_port_taken():
+        if time.time() >= deadline:
+            return False
+        time.sleep(0.25)
+    return True
+
+
+def up_windows(headless=False, started=None):
     """Windows: the video hub, the frames service, the browser mirror and UxPlay, each
     restarted when it exits (frames and the browser mirror also when their code
     changes); the mirror opens in a window of its own. They are in a job object, so all
     of them stop with this command. The Bluetooth HID service (Bluetooth LE) is
     started if it isn't running and keeps running after this command stops
-    (keep_hid; `phoneuse down` stops it)."""
+    (keep_hid; `phoneuse down` stops it). headless (`phoneuse serve`, and the Phone
+    Use window's background start, windows/background.py): no window opened.
+
+    Another `phoneuse up` that answers is left running (this one exits); one that doesn't,
+    and whatever old backends are left (orphaned services, a HID service that doesn't
+    answer, copies from another install or checkout), are stopped first (windows/stale.py).
+    started: called once this one is the backend, before its services start."""
     from .windows import appwindow
     from .windows import procs as wprocs
-    if not wprocs.single_instance("phoneuse-up"):
-        die("phoneuse up is already running on this PC (it owns the AirPlay and Bluetooth services).")
+    from .windows import stale
+
+    def note(*a):
+        print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+    # A backend runs if another `up` holds the lock, or (seen from a sandbox too) if the hub's
+    # port is taken.
+    locked = wprocs.single_instance("phoneuse-up")
+    if not locked or hub_port_taken():
+        if backend_answers():
+            die("phoneuse up is already running on this PC (it owns the AirPlay and Bluetooth services).")
+        if not can_reach_services():
+            die(SANDBOXED)
+        note("phoneuse up is already running, but its services don't answer: stopping it")
+        stale.stop_old(note, hid_answers=hid_status() is not None)
+        if not locked and not wprocs.take_over("phoneuse-up", wait=10):
+            die("An old phoneuse up didn't stop. Stop it (Task Manager: python.exe running phoneuse), "
+                "then run phoneuse up again.")
+        if not wait_hub_port_free(10):
+            die("An old phoneuse backend still holds its ports and couldn't be stopped from here. "
+                "Quit Phone Use (tray icon > Quit) or stop python.exe running phoneuse in Task Manager, then try again.")
+    else:
+        stale.stop_old(note, hid_answers=hid_status() is not None)
+    if started:
+        started()
     ux = uxplay_path()
     if not ux:
-        die("UxPlay (the AirPlay receiver) isn't installed. Run scripts\\windows\\install.ps1, "
+        die("UxPlay (the AirPlay receiver) isn't installed. Run windows\\scripts\\install.ps1, "
             "or `phoneuse doctor` to see what is missing.")
     job = wprocs.Job()
     stop = threading.Event()
@@ -1825,7 +1947,7 @@ def up_windows():
         if fw in ("block", "missing"):
             say(("Windows Firewall blocks UxPlay" if fw == "block" else "No Windows Firewall rule for UxPlay")
                 + f": the iPhone won't see {NAME}. Fix it once, " + doctor.FIREWALL_FIX.format(ux=ux))
-        if CFG.get("app_window", True) and not appwindow.open_window(url):
+        if not headless and CFG.get("app_window", True) and not appwindow.open_window(url):
             import webbrowser
             webbrowser.open(url)
     threading.Thread(target=first_status, daemon=True).start()
@@ -2051,12 +2173,30 @@ def _main():
     then_text = bool(args) and args[-1] == "--text" and cmd not in ("text", "screenshot")
     if then_text:
         args = args[:-1]
+    if cmd == "install" and APP:
+        sys.exit(install_app(args))
     if cmd == "install" and IS_WINDOWS:
         sys.exit(subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                                 os.path.join(ROOT, "scripts", "windows", "install.ps1")] + args).returncode)
+                                 os.path.join(ROOT, "windows", "scripts", "install.ps1")] + args).returncode)
     if cmd == "doctor":
         from . import doctor
         sys.exit(doctor.main(args))
+    # A sandbox that blocks local connections (Codex's, for one) makes every service look stopped:
+    # say so, instead of "not running", which sent agents to start a second backend.
+    if IS_WINDOWS and cmd not in ("claude", "up", "serve", "install") and not can_reach_services():
+        die(SANDBOXED)
+    if cmd == "claude":  # link the skill and write the phoneuse command for Claude Code (claude_setup)
+        from . import claude_setup
+        if args[:1] == ["connect"]:
+            claude_setup.connect()
+        elif args[:1] == ["disconnect"]:
+            claude_setup.disconnect()
+        elif args:
+            die("usage: phoneuse claude [connect|disconnect]")
+        st = claude_setup.state()
+        print(f"Claude Code: skill {'linked' if st['skill'] else 'not linked'} ({claude_setup.SKILL_DIR}), "
+              f"command {'in place' if st['command'] else 'not in place'} ({claude_setup.BIN})")
+        return
     if cmd == "install":
         subprocess.run(["sudo", os.path.join(ROOT, "scripts", "install.sh")], check=True)
         if not os.path.exists(os.path.join(ROOT, ".venv-vision")):

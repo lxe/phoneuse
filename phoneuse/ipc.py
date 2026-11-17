@@ -27,10 +27,10 @@ _token = None
 
 
 def token():
-    """This user's service token, created by whichever process needs it first."""
+    """This user's service token, created by whichever process needs it first. Read from
+    the file each time (it's tiny): a service that kept the token it started with turned
+    every client away once the file was made again, until it was restarted."""
     global _token
-    if _token:
-        return _token
     for _ in range(50):
         try:
             with open(TOKEN_FILE) as f:
@@ -47,7 +47,12 @@ def token():
                 with os.fdopen(fd, "w") as f:
                     f.write(secrets.token_hex(16))
                 continue
+        except OSError:
+            if _token:  # unreadable for a moment: the last one read
+                return _token
         time.sleep(0.02)
+    if _token:
+        return _token
     raise RuntimeError(f"can't read the service token in {TOKEN_FILE}")
 
 
@@ -156,6 +161,8 @@ def request(name, cmd, timeout=3.0):
         s.sendall(cmd.encode() + b"\n")
         f = s.makefile("rb")
         line = f.readline().decode().strip()
+        if not line:
+            raise ConnectionResetError(f"the {name} service closed the connection without a reply (authentication rejected or stale service)")
         data = f.read(int(line.split()[1])) if cmd == "shot" and line.startswith("ok ") else b""
         return line, data
 

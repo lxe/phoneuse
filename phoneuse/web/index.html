@@ -276,13 +276,22 @@ function updateNote() {
 }
 
 // ---- layout: the phone body fits the window; the screen keeps the phone's shape ----
+// The server sends the screen portrait or sideways (state.screen). The frames say it first, so the
+// shape follows the picture's: the canvas is never stretched while the phone turns.
+let frameSideways = null;  // the last frame was wider than tall; null before one
+function screenShape() {
+  const [w, h] = state.screen;
+  return frameSideways === null || frameSideways === (w > h) ? [w, h] : [h, w];
+}
 function layout() {
-  const aspect = state.screen[0] / state.screen[1];
-  const dw = 1 + 2 * state.bezel, dh = 1 / aspect + 2 * state.bezel;
-  // px per screen width; room above and below (and at the sides) for the agent glow
+  // in units of the screen's short side: the bezel and corners are fractions of it, so a
+  // sideways phone keeps the same ones
+  const [sw0, sh0] = screenShape(), short = Math.min(sw0, sh0);
+  const dw = sw0 / short + 2 * state.bezel, dh = sh0 / short + 2 * state.bezel;
+  // px per screen short side; room above and below (and at the sides) for the agent glow
   const u = Math.min((innerWidth - 64) / dw, (innerHeight - 120) / dh);  // 48 px above, 72 px below
   const pw = dw * u, ph = dh * u, pr = (state.radius + state.bezel) * u;
-  const b = state.bezel * u, sw = u, sh = u / aspect, sr = state.radius * u;
+  const b = state.bezel * u, sw = sw0 / short * u, sh = sh0 / short * u, sr = state.radius * u;
   // border-radius stays on #phone for the blurred glow, which inherits it
   Object.assign(phone.style, { width: `${pw}px`, height: `${ph}px`, borderRadius: `${pr}px` });
   phone.style.setProperty("--halo", `path("${squircle(pw + 5, ph + 5, pr + 2.5)}")`);
@@ -329,6 +338,8 @@ function newDecoder() {
     output(frame) {
       if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
         canvas.width = frame.displayWidth; canvas.height = frame.displayHeight;
+        const sideways = frame.displayWidth > frame.displayHeight;
+        if (sideways !== frameSideways) { frameSideways = sideways; layout(); }
       }
       ctx.drawImage(frame, 0, 0);
       frame.close();
@@ -424,7 +435,7 @@ function connect() {
     if (msg.type !== "state") return;
     const wasLive = state.live;
     state = msg;
-    if (!state.live) { if (wasLive) playing = false; blank(); }
+    if (!state.live) { if (wasLive) playing = false; blank(); frameSideways = null; }
     layout(); updateNote(); showAgent();
     scr.classList.toggle("stale", !!state.stale);
     awakeSw.setAttribute("aria-checked", !!state.awake);

@@ -21,15 +21,16 @@ import json
 import os
 import secrets
 import shutil
+import socket
 import sys
 import threading
 import time
 
 from aiohttp import web
 
-from . import screen, unlock
+from . import orientation, screen, unlock
 from .agent_session import AgentSession, set_start_setting, start_setting
-from .config import CFG, IS_WINDOWS, NAME, SCREEN_PT, config_path, runtime_path
+from .config import CFG, IS_WINDOWS, NAME, config_path, mirroring_model, runtime_path
 from .hidclient import Hid
 from .pointer import Keys, Pointer
 
@@ -151,6 +152,7 @@ class Mirror:
         self.stream = (AvStream if IS_WINDOWS else Stream)(self._frame)
         self.mirroring = False
         self.hub_live = False
+        self.screen = orientation.points_for(None)  # the phone's screen in points as it faces now
         self.hid = None
         # Who controls the phone (agent_session.py): the one record the gate, the pages,
         # the companion app and the notifications derive from.
@@ -355,7 +357,12 @@ class Mirror:
             if not IS_WINDOWS:  # Windows: the hub's status said it above
                 mirroring = await loop.run_in_executor(None, screen.airplay_mirroring)  # lsof on macOS: not on the loop
             bt = await loop.run_in_executor(None, self.bluetooth_up)
-            changed = mirroring != self.mirroring or bt != self.bluetooth
+            size = await loop.run_in_executor(None, orientation.refresh)  # None: no picture; keep the shape we had
+            turned = size is not None and orientation.points_for(size) != self.screen
+            if turned:
+                self.screen = orientation.points_for(size)
+                log(f"phone turned: screen {self.screen[0]} x {self.screen[1]} pt")
+            changed = mirroring != self.mirroring or bt != self.bluetooth or turned
             if bt and not self.bluetooth:  # (re)connected: rest the pointer where it touches nothing
                 self.hover_at = PARK
                 try:
@@ -402,7 +409,9 @@ class Tab:
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
                           "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
                           "awake": self.mirror.awake, "stale": self.mirror.stale,
-                          "name": NAME, "screen": SCREEN_PT,
+                          "name": NAME, "screen": self.mirror.screen,
+                          # the model identifier ("iPhone17,1"): the mirror window draws its frame
+                          "model": mirroring_model(),
                           "bezel": screen.BEZEL, "radius": screen.SCREEN_RADIUS})
         asyncio.ensure_future(self.ws.send_str(msg))
 
@@ -441,7 +450,7 @@ class Tab:
             self.pointer.release()
         elif t == "scroll":  # fractions of the screen to drag the content by
             self.pointer.hover(msg["x"], msg["y"])
-            self.pointer.scroll(msg["dx"] * SCREEN_PT[0], msg["dy"] * SCREEN_PT[1])
+            self.pointer.scroll(msg["dx"] * self.mirror.screen[0], msg["dy"] * self.mirror.screen[1])
         elif t == "mod":
             self.keys.modifier(int(msg["bit"]), bool(msg["down"]))
         elif t == "key":
@@ -459,7 +468,9 @@ class Tab:
 
 NUDGED_FILE = runtime_path("phoneuse-nudged")  # touched when keep-awake nudged during an agent's session
 AWAKE_FILE = os.path.join(os.path.dirname(config_path()), "keep-awake")  # exists while "keep the screen awake" is on
-INPUT_TRACE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-input.jsonl")
+# Windows has no /tmp (it would be C:\tmp, usually missing): the runtime folder, %LOCALAPPDATA%\phoneuse\run
+INPUT_TRACE = runtime_path("phoneuse-input.jsonl") if IS_WINDOWS else \
+    os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "phoneuse-input.jsonl")
 
 
 def same_origin(req):
@@ -909,6 +920,14 @@ def app(mirror):
         return web.json_response({"link": await asyncio.get_running_loop().run_in_executor(None, companion.new_pairing)})
     a.router.add_post("/api/companion/pair", companion_pair)
 
+    async def companion_unpair(req):
+        # `phoneuse app unpair`, for windows that pair (the Windows app): forgets every paired app.
+        if req.headers.get("Origin") and not same_origin(req):
+            return web.Response(status=403)
+        from . import companion
+        return web.json_response({"unpaired": await asyncio.get_running_loop().run_in_executor(None, companion.forget)})
+    a.router.add_post("/api/companion/unpair", companion_unpair)
+
     async def app_state(req):
         # Everything a control window shows, in one call: the next step (overview.hero) and
         # the settings. Read-only; each setting still changes through its own route.
@@ -927,9 +946,16 @@ def app(mirror):
                 paired = len(companion.load().get("devices") or {})
             except Exception:  # noqa: BLE001
                 paired = 0
-            from . import bluetooth_setup
+            from . import bluetooth_setup, phones
+            phone = phones.current()
+            try:  # the mirroring phone's pointer is measured (None: no phone has mirrored yet)
+                calibrated = None if not phone else not phones.needs_calibration(phone)
+            except Exception:  # noqa: BLE001
+                calibrated = None
             return {"claude": claude_setup.state(), "firewall": netcheck.detect(),
-                    "confirmed": netcheck.confirmed(), "paired": paired, "pc_bluetooth": bluetooth_setup.on()}
+                    "confirmed": netcheck.confirmed(), "paired": paired, "pc_bluetooth": bluetooth_setup.on(),
+                    "calibrated": calibrated, "pc": os.environ.get("COMPUTERNAME") or socket.gethostname(),
+                    "input_choice": overview.input_choice()}
         out = {"running": True, "picture": picture_state(), "name": NAME}
         out["bridge"], out["session"], out["awake"], out["passcode"], h = await asyncio.gather(
             get(bridges.state), get(sessions.setting), get(awake), get(passcode),
@@ -939,6 +965,8 @@ def app(mirror):
             netcheck.remember(mirrored=True)  # the iPhone reached this PC: the ports are open
             out["confirmed"] = True
         out["hero"] = overview.hero(out, NAME)
+        out["bluetooth"] = mirror.bluetooth
+        out["setup"] = overview.checklist(out, NAME)
         # What waits for the owner, for shells that notify natively (the Mac app); each is answered through
         # /api/session/answer or /api/unlock/answer with its id
         sp, up = mirror.sessions.pending, mirror.unlocks.pending
@@ -947,6 +975,52 @@ def app(mirror):
             "unlock": {"id": up["id"]} if up else None}
         return web.json_response(out)
     a.router.add_get("/api/app", app_state)
+
+    async def setup_firewall(req):
+        """The setup checklist's firewall step: open the ports (Windows: one UAC prompt)."""
+        if not same_origin(req):
+            return web.Response(status=403)
+        from . import netcheck
+        try:
+            said = await asyncio.get_running_loop().run_in_executor(None, netcheck.allow)
+        except Exception as e:  # noqa: BLE001
+            return web.json_response({"error": str(e)})
+        return web.json_response({"ok": True, "message": said})
+    a.router.add_post("/api/setup/firewall", setup_firewall)
+
+    async def setup_input(req):
+        """{"choice": "pc" | "bridge" | null}: the setup checklist's choice of the phone's
+        mouse and keyboard. Choosing this PC turns input through a saved bridge off."""
+        if not same_origin(req):
+            return web.Response(status=403)
+        from . import bridge as bridge_mod, overview
+        choice = (await req.json()).get("choice")
+        try:
+            overview.set_input_choice(choice)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        cfg = bridge_mod.saved()
+        if choice == "pc" and cfg and cfg.get("use", True):
+            from .bridge_web import use_bridge
+            cfg["use"] = False
+            bridge_mod.save(cfg)
+            await asyncio.get_running_loop().run_in_executor(None, use_bridge, cfg)
+        return web.json_response({"choice": choice})
+    a.router.add_post("/api/setup/input", setup_input)
+
+    async def claude_connect(req):
+        """{"on"}: connect Claude Code (the skill and the phoneuse command) or disconnect it."""
+        if not same_origin(req):
+            return web.Response(status=403)
+        from . import claude_setup
+        on = bool((await req.json()).get("on", True))
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, claude_setup.connect if on else claude_setup.disconnect)
+        except Exception as e:  # noqa: BLE001
+            return web.json_response({"error": str(e)})
+        return web.json_response(claude_setup.state())
+    a.router.add_post("/api/claude", claude_connect)
     return a
 
 

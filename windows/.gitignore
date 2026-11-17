@@ -1,0 +1,4 @@
+# the native mirror window, as scripts/build-winui.ps1 builds it for a checkout
+dist/
+# the packages (scripts/package.ps1): build/release, and build/stage while they're made
+build/

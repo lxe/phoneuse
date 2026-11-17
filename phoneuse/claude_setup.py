@@ -13,11 +13,17 @@ state() says which pieces are in place; connect() and disconnect() add or remove
 refresh() redoes connect() for someone who connected before (the app runs it at start),
 so older setups catch up: a copied skill, or the MCP server Phone Use used to add.
 Nothing else in ~/.claude or ~/.claude.json changes.
+
+On Windows the skill is a directory junction (a symlink needs Developer Mode or admin),
+and the command is two files in ~/.local/bin, where Claude Code's own claude.exe is:
+phoneuse (sh, for Git Bash, which Claude Code's Bash tool runs) and phoneuse.cmd (for
+PowerShell and cmd), both running this copy's CLI with this copy's Python.
 """
 import json
 import os
 import shlex
 import shutil
+import sys
 
 HOME = os.path.expanduser("~")
 SKILL_DIR = os.path.join(HOME, ".claude", "skills", "phoneuse")
@@ -26,6 +32,8 @@ BIN = os.path.join(HOME, ".local", "bin", "phoneuse")
 PKG = os.path.dirname(os.path.realpath(__file__))
 FLATPAK_ID = os.environ.get("FLATPAK_ID")
 MARK = "# Phone Use"  # the first comment line of the command we write, so we only ever remove our own
+WINDOWS = sys.platform == "win32"
+BIN_CMD = BIN + ".cmd"  # Windows: the same command for PowerShell and cmd
 
 
 def _flatpak_files():
@@ -53,10 +61,52 @@ def _skill_source():
     return None
 
 
+def _windows_python():
+    """The Python that runs this copy: the installed app's core/.venv or its bundled one,
+    or the checkout's venv, as bin/phoneuse.cmd chooses."""
+    root = os.path.dirname(PKG)
+    for py in (os.path.join(root, ".venv", "Scripts", "python.exe"), os.path.join(root, "python", "python.exe")):
+        if os.path.isfile(py):
+            return py
+    return sys.executable
+
+
 def _cli_script():
+    if WINDOWS:  # Git Bash: Windows paths with forward slashes work there
+        script = os.path.join(os.path.dirname(PKG), "bin", "phoneuse").replace("\\", "/")
+        py = _windows_python().replace("\\", "/")
+        return (f"#!/bin/sh\n{MARK}: lets agents (and you) run phoneuse commands.\n"
+                f"export PYTHONUTF8=1\nexec {shlex.quote(py)} {shlex.quote(script)} \"$@\"\n")
     target = (f"flatpak run --command=phoneuse {FLATPAK_ID}" if FLATPAK_ID
               else shlex.quote(os.path.join(os.path.dirname(PKG), "bin", "phoneuse")))  # "Phone Use.app"
     return f"#!/bin/sh\n{MARK}: lets agents (and you) run phoneuse commands.\nexec {target} \"$@\"\n"
+
+
+def _cli_cmd():
+    """Windows: phoneuse.cmd, the same command for PowerShell and cmd."""
+    script = os.path.join(os.path.dirname(PKG), "bin", "phoneuse")
+    return (f"@echo off\r\nrem {MARK}: lets agents (and you) run phoneuse commands.\r\n"
+            f"set PYTHONUTF8=1\r\n\"{_windows_python()}\" \"{script}\" %*\r\n")
+
+
+def _is_link(path):
+    """A symlink, or on Windows a directory junction (os.path.islink says no to those)."""
+    if os.path.islink(path):
+        return True
+    if WINDOWS and os.path.isdir(path):
+        try:
+            os.readlink(path)  # reads a junction's target too
+            return True
+        except (OSError, ValueError):
+            return False
+    return False
+
+
+def _link_target(path):
+    try:
+        return os.path.normcase(os.path.normpath(os.readlink(path).removeprefix("\\\\?\\")))
+    except (OSError, ValueError):
+        return None
 
 
 def _read_json():
@@ -89,10 +139,16 @@ def state():
     of Phone Use, and "claude": whether Claude Code looks installed (~/.claude exists)."""
     src = _skill_source()
     # Compare the link's text: inside the Flatpak its target isn't visible.
-    skill_ok = bool(src) and os.path.islink(SKILL_DIR) and os.readlink(SKILL_DIR) == src
+    if WINDOWS:
+        skill_ok = bool(src) and _is_link(SKILL_DIR) and _link_target(SKILL_DIR) == os.path.normcase(os.path.normpath(src))
+    else:
+        skill_ok = bool(src) and os.path.islink(SKILL_DIR) and os.readlink(SKILL_DIR) == src
     try:
-        with open(BIN) as f:
+        with open(BIN, newline="") as f:
             cmd_ok = f.read() == _cli_script()
+        if WINDOWS:
+            with open(BIN_CMD, newline="") as f:
+                cmd_ok = cmd_ok and f.read() == _cli_cmd()
     except OSError:
         cmd_ok = False
     return {"claude": os.path.isdir(os.path.join(HOME, ".claude")), "skill": skill_ok, "command": cmd_ok}
@@ -104,7 +160,9 @@ def connected():
 
 
 def _remove_skill():
-    if os.path.islink(SKILL_DIR) or os.path.isfile(SKILL_DIR):
+    if WINDOWS and _is_link(SKILL_DIR) and os.path.isdir(SKILL_DIR):
+        os.rmdir(SKILL_DIR)  # removes the junction only, never what it points at
+    elif os.path.islink(SKILL_DIR) or os.path.isfile(SKILL_DIR):
         os.remove(SKILL_DIR)
     elif os.path.isdir(SKILL_DIR):
         shutil.rmtree(SKILL_DIR)
@@ -123,13 +181,18 @@ def connect():
         raise RuntimeError("the skill isn't in this copy of Phone Use")
     _remove_skill()
     os.makedirs(os.path.dirname(SKILL_DIR), exist_ok=True)
-    os.symlink(src, SKILL_DIR)
+    if WINDOWS:
+        import _winapi
+        _winapi.CreateJunction(src, SKILL_DIR)
+    else:
+        os.symlink(src, SKILL_DIR)
     _remove_old_mcp()
     os.makedirs(os.path.dirname(BIN), exist_ok=True)
-    if os.path.islink(BIN) or os.path.exists(BIN):
-        os.remove(BIN)
-    with open(BIN, "w") as f:
-        f.write(_cli_script())
+    for path, text in [(BIN, _cli_script())] + ([(BIN_CMD, _cli_cmd())] if WINDOWS else []):
+        if os.path.islink(path) or os.path.exists(path):
+            os.remove(path)
+        with open(path, "w", newline="") as f:
+            f.write(text)
     os.chmod(BIN, 0o755)
 
 
@@ -151,5 +214,6 @@ def refresh():
 def disconnect():
     _remove_skill()
     _remove_old_mcp()
-    if _ours(BIN):
-        os.remove(BIN)
+    for path in (BIN, BIN_CMD):
+        if _ours(path):
+            os.remove(path)

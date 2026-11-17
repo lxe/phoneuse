@@ -98,6 +98,13 @@ in), the page glows, shows where the agent points, and takes no input from the
 page; Take over makes the agent's next action fail with a stop message until
 the user resumes it. A pill shows when the Bluetooth link is down.
 
+**`phoneuse/orientation.py`** knows which way the phone faces. The configured screen
+size is portrait; when the frames service reports a frame wider than tall (`size=WxH`
+in its status), everything that lays the phone out or plans a gesture in points uses
+the swapped size. How a sideways picture's fractions map onto the Bluetooth absolute
+pointer is decided in one function there (`hid_fractions`), which assumes iOS follows
+the screen as it faces; that is not verified on a phone yet.
+
 ## The mirror
 
 UxPlay receives the AirPlay stream and passes the H.264 video on, undecoded, as
@@ -178,7 +185,7 @@ there is nothing to renew or time out, and a viewer that falls behind skips to a
 fresh keyframe instead of piling up delay. Whether a phone is mirroring comes from
 UxPlay's TCP connection on port 7100 (psutil).
 
-**UxPlay** is built from source in MSYS2 (`scripts/windows/build-uxplay.sh`),
+**UxPlay** is built from source in MSYS2 (`windows/scripts/build-uxplay.sh`),
 pinned to a tested commit; 1.74 brings its own mDNS responder, so Bonjour isn't
 needed. It logs with `printf` and never flushes, which over a pipe would hold back
 the "connection request from" line that tells the HID service which phone is

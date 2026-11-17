@@ -1,0 +1,103 @@
+# Phone Use for Windows: the portable zip and the installer (windows/scripts/package.ps1).
+# Every push to main builds both and keeps them as the run's artifacts; a v* tag also attaches them
+# to that tag's GitHub release. Pull requests that touch the Windows app build them too, so a PR
+# shows whether it still packages before it's merged.
+name: windows app
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths: [windows/**, phoneuse/**, bin/phoneuse, skill/**, pyproject.toml, .github/workflows/windows-app.yml]
+
+permissions:
+  contents: write  # attach to the release, on tags only
+
+concurrency:
+  group: windows-app-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with: {dotnet-version: 10.0.x}
+
+      - name: MSYS2 (UCRT64) with UxPlay's build tools and GStreamer
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-libplist mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-gstreamer mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good mingw-w64-ucrt-x86_64-gst-plugins-bad
+            mingw-w64-ucrt-x86_64-gst-libav
+
+      - name: Build UxPlay
+        shell: msys2 {0}
+        run: bash windows/scripts/build-uxplay.sh
+
+      # FFmpeg with only the audio decoders UxPlay uses, in place of MSYS2's (~150 MB smaller). The
+      # script rebuilds when MSYS2's FFmpeg version moves past the cached one.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg-audio
+          key: ffmpeg-audio-${{ hashFiles('windows/scripts/build-ffmpeg-audio.sh') }}
+      - name: Build the audio-only FFmpeg
+        shell: msys2 {0}
+        run: bash windows/scripts/build-ffmpeg-audio.sh "$(cygpath -u '${{ runner.temp }}')/ffmpeg-audio"
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+          "${env:ProgramFiles(x86)}\Inno Setup 6" | Out-File -Append $env:GITHUB_PATH
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $base = (Select-String -Path pyproject.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "$base.${{ github.run_number }}" }
+          "version=$v" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Package
+        shell: powershell  # Windows PowerShell 5.1, as users run the scripts
+        env:
+          # setup-msys2 installs into the runner's temp folder, not C:\msys64
+          PHONEUSE_MSYS2: ${{ steps.msys2.outputs.msys2-location }}
+          PHONEUSE_FFMPEG_AUDIO: ${{ runner.temp }}\ffmpeg-audio
+        run: windows\scripts\package.ps1 -Version ${{ steps.version.outputs.version }} -Out windows\build\release
+
+      - name: Smoke test the portable app's phoneuse
+        shell: pwsh
+        run: |
+          $zip = Get-Item windows\build\release\*-portable.zip
+          Expand-Archive $zip.FullName $env:RUNNER_TEMP\portable
+          $cmd = "$env:RUNNER_TEMP\portable\PhoneUse\core\bin\phoneuse.cmd"
+          $out = & $cmd --help  # captured: cutting the pipe short would kill it and fail the step
+          if ($LASTEXITCODE -ne 0) { throw "phoneuse --help failed from the portable app" }
+          $out | Select-Object -First 5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneUse-${{ steps.version.outputs.version }}-windows
+          path: windows/build/release/*
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.ref_type == 'tag'
+        env: {GH_TOKEN: "${{ github.token }}"}
+        shell: pwsh
+        run: |
+          gh release view "${{ github.ref_name }}" *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create "${{ github.ref_name }}" --draft --title "${{ github.ref_name }}" --notes "" }
+          gh release upload "${{ github.ref_name }}" (Get-Item windows\build\release\*).FullName --clobber

@@ -11,6 +11,8 @@
           a rounded square with GNOME's margin (8 of every 128), transparent around it.
   Web:    phoneuse/web/favicon-32.png, favicon-64.png (the Linux shape) and apple-touch-icon.png
           (180, opaque: iOS rounds it).
+  Windows: windows/PhoneUseMirror/Assets/AppIcon.png (256) and AppIcon.ico (16 to 256), the Linux shape:
+          Windows draws an icon as it is, so the rounding has to be in the image.
 Every PNG is then compressed with pngquant (quality 92-100), if it's installed.
 """
 import glob
@@ -81,11 +83,16 @@ def main():
             sizes(linux_full, os.path.join(web, f"favicon-{px}.png"), px)
         magick(MASTER, "-filter", "Lanczos", "-resize", "180x180", "-alpha", "off",
                os.path.join(web, "apple-touch-icon.png"))
+        win = os.path.join(ROOT, "windows", "PhoneUseMirror", "Assets")
+        sizes(linux_full, os.path.join(win, "AppIcon.png"), 256)
+        magick(linux_full, "-filter", "Lanczos", "-define", "icon:auto-resize=256,64,48,40,32,24,20,16",
+               os.path.join(win, "AppIcon.ico"))
     outputs = (glob.glob(os.path.join(ROOT, "ios", "App", "Assets.xcassets", "AppIcon.appiconset", "*.png"))
                + glob.glob(os.path.join(ROOT, "mac", "PhoneUse", "Assets.xcassets", "AppIcon.appiconset", "*.png"))
                + glob.glob(os.path.join(ROOT, "packaging", "icons", "hicolor", "*", "apps", "co.lxe.PhoneUse.png"))
                + glob.glob(os.path.join(ROOT, "phoneuse", "web", "favicon-*.png"))
-               + [os.path.join(ROOT, "phoneuse", "web", "apple-touch-icon.png")])
+               + [os.path.join(ROOT, "phoneuse", "web", "apple-touch-icon.png"),
+                  os.path.join(ROOT, "windows", "PhoneUseMirror", "Assets", "AppIcon.png")])
     if shutil.which("pngquant"):  # the full-size PNGs are ~2 MB each uncompressed
         subprocess.run(["pngquant", "--quality=92-100", "--speed", "1", "--strip", "--force", "--ext", ".png",
                         *outputs], check=False)

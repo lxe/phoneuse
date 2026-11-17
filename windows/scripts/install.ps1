@@ -1,12 +1,12 @@
 # phoneuse on Windows: everything it needs, in one go. Safe to run again (it updates).
-#   powershell -ExecutionPolicy Bypass -File scripts\windows\install.ps1 [-NoVision] [-NoUxPlay] [-NoFirewall] [-NoPath]
+#   powershell -ExecutionPolicy Bypass -File windows\scripts\install.ps1 [-NoVision] [-NoUxPlay] [-NoFirewall] [-NoPath]
 #
 #   1. .venv with phoneuse and its Python packages (PyAV, aiohttp, the Windows Runtime
 #      Bluetooth bindings); the `phoneuse` launcher in bin\
 #   2. MSYS2 (C:\msys64) and UxPlay, the AirPlay receiver, built from source
 #   3. a Windows Firewall rule so the iPhone can reach UxPlay (one UAC prompt)
 #   4. bin\ on your PATH
-#   5. the screen-reading models (.venv-vision; a few GB; skip with -NoVision)
+#   5. screen reading, the OCR (.venv-vision; up to 2 GB; skip with -NoVision)
 #   6. `phoneuse doctor`, which checks all of it
 param([switch]$NoVision, [switch]$NoUxPlay, [switch]$NoFirewall, [switch]$NoPath)
 $ErrorActionPreference = "Stop"
@@ -51,8 +51,14 @@ if (-not $NoUxPlay) {
     Invoke-Msys "pacman -Syuu --noconfirm --disable-download-timeout" | Out-Null
     Write-Step "Building UxPlay"
     Push-Location $Root
-    try { Invoke-Msys "bash scripts/windows/build-uxplay.sh" } finally { Pop-Location }
+    try { Invoke-Msys "bash windows/scripts/build-uxplay.sh" } finally { Pop-Location }
     if (-not (Test-Path $UxPlay)) { throw "UxPlay didn't build; see the output above" }
+}
+
+# 2b. The native mirror window (WinUI 3), when the .NET SDK is here; else the Edge/Chrome one
+if (Get-Command dotnet -ErrorAction SilentlyContinue) {
+    Write-Step "Building the mirror window (WinUI 3)"
+    try { & "$PSScriptRoot\build-winui.ps1" } catch { Write-Warning "the native mirror window didn't build ($($_.Exception.Message)); the browser one is used" }
 }
 
 # 3. Firewall
@@ -63,7 +69,7 @@ if (-not $NoFirewall -and (Test-Path $UxPlay)) {
         $p = Start-Process powershell -Verb RunAs -ArgumentList $fwArgs -Wait -PassThru
         if ($p.ExitCode -ne 0) { Write-Warning "the firewall rule wasn't added (exit $($p.ExitCode))" }
     } catch {
-        Write-Warning "the firewall rule wasn't added ($($_.Exception.Message)). Run as admin: powershell -File scripts\windows\firewall.ps1 -Program $UxPlay"
+        Write-Warning "the firewall rule wasn't added ($($_.Exception.Message)). Run as admin: powershell -File windows\scripts\firewall.ps1 -Program $UxPlay"
     }
 }
 
@@ -77,7 +83,7 @@ if (-not $NoPath) {
     }
 }
 
-# 5. Vision models
+# 5. Screen reading (OCR)
 if (-not $NoVision) { & "$PSScriptRoot\setup-vision.ps1" }
 
 # 6. Check

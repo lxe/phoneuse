@@ -38,6 +38,9 @@ class BridgeRoutes:
         self.lock = asyncio.Lock()
         self.adoption = None  # bridge.Adoption while this PC asks a bridge to let it in
         self._nearby, self._nearby_at, self._looking = [], 0.0, False
+        # Flashing over USB (POST /api/bridge/firmware/install), for apps that aren't this
+        # Python process (the Windows window; app.py calls bridge.install_firmware itself)
+        self.flashing = {"busy": False, "step": None, "progress": 0.0, "error": None, "done": False}
 
     def nearby(self):
         """Bridges on the network that this PC doesn't use, looked up at most every 4 s in
@@ -294,8 +297,70 @@ class BridgeRoutes:
             return web.json_response({"error": f"the bridge didn't answer: {e}. Hold its lower button for 3 seconds, then try again."})
         return web.json_response({"ok": True})
 
+    async def firmware(self, req):
+        """The firmware this copy installs, whether its tools are here yet ("ready": false
+        means flashing downloads the firmware and esptool first), the board on USB, and the
+        flash in progress: {"version", "ready", "port", "driver_missing", "busy", "step",
+        "progress", "error", "done"}."""
+        loop = asyncio.get_running_loop()
+        found = bridge.release_firmware()
+        ready = await loop.run_in_executor(None, bridge.flashing_ready)
+
+        def board():
+            try:
+                port = bridge.usb_port()
+            except Exception:  # noqa: BLE001 - no serial support: nothing to show
+                port = None
+            return port, (not port and bridge.usb_board_without_driver())
+        port, missing = await loop.run_in_executor(None, board)
+        return web.json_response({"version": found[1] if found else bridge.FIRMWARE_RELEASE[0], "ready": ready,
+                                  "port": port, "driver_missing": missing, **self.flashing})
+
+    async def firmware_install(self, req):
+        """Write the firmware to the board on USB, erasing it (its Wi-Fi, key and iPhone
+        pairing), in the background: GET /api/bridge/firmware follows it ("step" says what
+        it does). The first time, the firmware and esptool are downloaded first. Once it's
+        written, the bridge this PC had set up is forgotten here: its key went with the erase."""
+        self._guard(req)
+        if self.flashing["busy"]:
+            return web.json_response({"error": "already flashing"})
+        loop = asyncio.get_running_loop()
+        port = await loop.run_in_executor(None, bridge.usb_port)
+        if not port:
+            return web.json_response({"error": "No board on USB. Plug the T-Display in with a data cable."})
+        self.flashing = {"busy": True, "step": "Starting…", "progress": 0.0, "error": None, "done": False}
+
+        def progress(frac):
+            self.flashing["progress"] = frac
+
+        def step(text):
+            self.flashing["step"] = text
+
+        def work():
+            try:
+                if not bridge.flashing_ready():
+                    bridge.prepare_flashing(step)
+                found = bridge.release_firmware()
+                step(f"Flashing bridge firmware {found[1]}…" if found and found[1] else "Flashing…")
+                bridge.install_firmware(port, progress)
+                if bridge.saved():
+                    _daemon("bridge off")
+                    bridge.forget(reset=False)  # it was erased: nothing to tell it
+                # Flashed: the downloaded firmware and esptool go (after a failure they stay, so
+                # Try Again doesn't download them again)
+                bridge.remove_flashing_tools()
+                self.flashing.update(done=True, progress=1.0, step="Flashed")
+            except Exception as e:  # noqa: BLE001
+                self.flashing["error"] = str(e)
+            finally:
+                self.flashing["busy"] = False
+        threading.Thread(target=work, daemon=True).start()
+        return web.json_response({"ok": True, "port": port})
+
     def add(self, app):
         r = app.router
+        r.add_get("/api/bridge/firmware", self.firmware)
+        r.add_post("/api/bridge/firmware/install", self.firmware_install)
         r.add_route("*", "/api/bridge", self.state)
         r.add_post("/api/bridge/find", self.find)
         r.add_post("/api/bridge/pair", self.pair)

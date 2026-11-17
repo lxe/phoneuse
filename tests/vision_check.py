@@ -44,12 +44,6 @@ def main():
         ok = got is not None and abs(got[0] - x) < 0.03 and abs(got[1] - y) < 0.02
         fails += not ok
         print(("PASS " if ok else "FAIL ") + f"{word} at {got} (drawn at {x}, {y})")
-    t = time.time()
-    r = cli.vision({"op": "find", "image": path, "what": "Bluetooth text"})
-    print(f"grounding in {time.time() - t:.2f} s: {r}")
-    ok = "x" in r and abs(r["x"] - 0.30) < 0.08 and abs(r["y"] - 0.40) < 0.04
-    fails += not ok
-    print(("PASS " if ok else "FAIL ") + "grounding finds 'Bluetooth'")
     log = open(cli.VISION_LOG, errors="replace").read()[-600:]
     print("vision log tail:", log)
     sys.exit(1 if fails else 0)

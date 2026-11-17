@@ -33,8 +33,8 @@ from . import touch
 # Over Bluetooth LE (Windows) a report takes a whole connection interval (~16 ms) to go
 # out, so the tick doesn't sleep after a hover report on top of that (the pointer got
 # ~42 updates a second instead of ~64).
-LE = touch.LINK == "ble"
-# The wheel drags faster than agents' exact scrolls (touch.SCROLL_MAX is small over LE
+# (touch.link(): Windows' own LE, unless input goes through the bridge, which is Classic.)
+# The wheel drags faster than agents' exact scrolls (touch.scroll_max() is small over LE
 # for accuracy): a hand on the wheel wants the page to keep up more than exactness.
 WHEEL_MAX = 30.0  # pt per report
 SCROLL_STILL = touch.SCROLL_HOLD  # lift once the wheel scroll is done and the wheel idle this long (s)
@@ -129,7 +129,7 @@ class Pointer:
         room = w
         for i in (0, 1):
             if abs(d[i]) > 1e-6:
-                size = touch.SCREEN_PT[i]
+                size = touch.pt()[i]
                 at = self.touch[i] * size + self.carry[i]
                 edge = (1 - SCROLL_MARGIN) * size - at if d[i] > 0 else at - SCROLL_MARGIN * size
                 room = min(room, max(edge, 0.0) / abs(d[i]))
@@ -173,7 +173,7 @@ class Pointer:
         px, py = self.sent or (clamp(fx), clamp(fy))
         self.hid().cmd(f"a {px:.5f} {py:.5f} 1")
         self.touch = [px, py]
-        self.carry = [(clamp(fx) - px) * touch.SCREEN_PT[0], (clamp(fy) - py) * touch.SCREEN_PT[1]]
+        self.carry = [(clamp(fx) - px) * touch.pt()[0], (clamp(fy) - py) * touch.pt()[1]]
         self.dragged_from = (fx, fy)
         self.pressed = True
 
@@ -224,7 +224,7 @@ class Pointer:
             # Over Bluetooth LE a hover report already takes a connection interval
             # (~16 ms) to go out: sleeping a tick on top held the pointer to ~42 updates
             # a second. Drags keep the tick: the calibration was measured with it.
-            if not (hovered and LE):
+            if not (hovered and touch.link() == "ble"):
                 time.sleep(touch.TICK)
             hovered = False
             try:
@@ -252,8 +252,8 @@ class Pointer:
                             self.wheel[i] -= step[i]
                             self.carry[i] += step[i]
                     else:
-                        self.carry[0] += (fx - lx) * touch.SCREEN_PT[0]
-                        self.carry[1] += (fy - ly) * touch.SCREEN_PT[1]
+                        self.carry[0] += (fx - lx) * touch.pt()[0]
+                        self.carry[1] += (fy - ly) * touch.pt()[1]
                     ux, uy = touch.whole_units(*self.carry)  # never more than the pointer moved
                     if self.scrolling:
                         if ux or uy:
@@ -272,8 +272,8 @@ class Pointer:
                         moved = touch.points_for(mag)
                         self.carry[0] -= moved * ux / mag
                         self.carry[1] -= moved * uy / mag
-                        self.touch[0] = clamp(self.touch[0] + moved * ux / mag / touch.SCREEN_PT[0])
-                        self.touch[1] = clamp(self.touch[1] + moved * uy / mag / touch.SCREEN_PT[1])
+                        self.touch[0] = clamp(self.touch[0] + moved * ux / mag / touch.pt()[0])
+                        self.touch[1] = clamp(self.touch[1] + moved * uy / mag / touch.pt()[1])
             except Exception as e:
                 if str(e) != self.last_error:  # say it once, not every tick
                     self.log("pointer error:", e)

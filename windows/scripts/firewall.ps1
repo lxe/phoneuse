@@ -1,6 +1,6 @@
 # Let the iPhone reach UxPlay (AirPlay) through Windows Firewall. Needs admin: install.ps1
 # runs it elevated, which shows one UAC prompt.
-#   powershell -ExecutionPolicy Bypass -File scripts\windows\firewall.ps1 -Program C:\msys64\ucrt64\bin\uxplay.exe
+#   powershell -ExecutionPolicy Bypass -File windows\scripts\firewall.ps1 -Program C:\msys64\ucrt64\bin\uxplay.exe
 #
 # One rule for the program (all its ports: AirPlay TCP 7000/7001/7100, UDP 6000/6001/7011,
 # and mDNS UDP 5353 for its built-in responder), on every network profile, but only

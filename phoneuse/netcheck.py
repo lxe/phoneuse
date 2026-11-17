@@ -14,6 +14,8 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
+import time
 
 from .companion import PORT as COMPANION_PORT
 from .config import CFG, MACOS, config_path
@@ -67,7 +69,10 @@ def _system_bus():
 
 
 def _firewalld_running():
-    from gi.repository import GLib
+    try:
+        from gi.repository import GLib
+    except ImportError:  # no D-Bus bindings (Windows): no firewalld either
+        return False
     try:
         r = _system_bus().call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
                                     "NameHasOwner", GLib.Variant("(s)", (FIREWALLD,)), GLib.VariantType("(b)"),
@@ -85,8 +90,48 @@ def _ufw_enabled():
         return False
 
 
+_windows_seen = (0.0, None)  # (when, answer): reading the rules runs PowerShell (about a second)
+
+
+def _windows():
+    """"windows" while Windows Firewall has no rule letting the iPhone reach UxPlay (or a Block
+    rule wins), else None. Asked at most every 30 s; reading the rules needs no rights."""
+    global _windows_seen
+    at, answer = _windows_seen
+    if time.time() - at < 30:
+        return answer
+    from . import doctor
+    from .cli import uxplay_path
+    ux = uxplay_path()
+    answer = "windows" if ux and doctor.firewall_state(ux) in ("missing", "block") else None
+    _windows_seen = (time.time(), answer)
+    return answer
+
+
+def _allow_windows():
+    """The firewall rule for UxPlay (windows/scripts/firewall.ps1), elevated: one UAC prompt."""
+    global _windows_seen
+    from .cli import ROOT, uxplay_path
+    script = os.path.join(ROOT, "windows", "scripts", "firewall.ps1")
+    cmd = (f"$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList "
+           f"'-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -Program \"{uxplay_path()}\"'; exit $p.ExitCode")
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True,
+                       text=True, timeout=300, creationflags=0x08000000)
+    _windows_seen = (0.0, None)
+    if r.returncode:
+        err = (r.stderr or "").strip()
+        if "cancel" in err.lower():  # the UAC prompt was dismissed
+            raise RuntimeError("cancelled")
+        raise RuntimeError(err.splitlines()[-1] if err else f"the firewall script failed (exit {r.returncode})")
+    remember(allowed=True)
+    return "Windows Firewall now lets the iPhone reach Phone Use."
+
+
 def detect():
-    """"firewalld", "ufw", "macos" or None: which firewall may block the iPhone. Needs no rights."""
+    """"firewalld", "ufw", "macos", "windows" or None: which firewall may block the iPhone.
+    Needs no rights."""
+    if sys.platform == "win32":
+        return _windows()
     if MACOS:
         try:
             out = subprocess.run([SOCKETFILTERFW, "--getglobalstate"], capture_output=True, text=True,
@@ -128,6 +173,8 @@ def allow():
     """Open PORTS in the active firewall, asking for the administrator password once.
     Returns a sentence for the user. Raises RuntimeError when it couldn't."""
     fw = detect()
+    if fw == "windows":
+        return _allow_windows()
     if fw == "macos":  # no ports to open: macOS asks about each program the first time it listens
         return ("macOS asks whether Phone Use may accept incoming connections the first time it listens. "
                 "Choose Allow, or turn it on in System Settings › Network › Firewall › Options.")
