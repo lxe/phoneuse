@@ -167,12 +167,14 @@ class HID:
 
     def drop(self, why):
         log("disconnect:", why)
-        for s in (self.intr, self.ctrl):
+        # Detach first: closing a handed-over channel wakes its reader (HandedOver), and the
+        # reader must then fail its "still our channel?" check, not drop a replacement too.
+        socks, self.ctrl, self.intr = (self.intr, self.ctrl), None, None
+        for s in socks:
             try:
                 s and s.close()
             except OSError:
                 pass
-        self.ctrl = self.intr = None
         reconnect_now.set()
 
     # mouse
@@ -559,10 +561,24 @@ def set_mirror(name):
     save_state()
     log("mirroring phone:", mirror_name[0])
     if hid.connected and hid.peer and not wanted(hid.peer):  # no peer: input goes through the bridge
-        hid.drop(f"{hid.peer} is not the mirroring phone")  # also wakes the reconnect loop
+        peer = hid.peer
+        hid.drop(f"{peer} is not the mirroring phone")  # also wakes the reconnect loop
+        # The Bluetooth link itself too: while it stays up, an iPhone refuses new HID
+        # connections on it ("Connection refused") until something disconnects it.
+        disconnect(peer)
     else:
         reconnect_now.set()
     return f"mirror={mirror_name[0]!r} connected={hid.connected} peer={hid.peer}"
+
+
+def disconnect(addr):
+    """Close this PC's Bluetooth connection to one device (BlueZ Device1), not only its HID channels."""
+    try:
+        dbus.Interface(bus.get_object("org.bluez", "/org/bluez/hci0/dev_" + addr.upper().replace(":", "_")),
+                       "org.bluez.Device1").Disconnect()
+        log("disconnected", addr)
+    except dbus.DBusException as e:
+        log("couldn't disconnect", addr, e)
 
 
 def disconnect_all():
@@ -620,6 +636,24 @@ def incoming(addr, kind, sock):
     threading.Thread(target=handle_ctrl, args=(c,), daemon=True).start()
 
 
+class HandedOver(socket.socket):
+    """A connection bluetoothd accepted and handed over (NewConnection). bluetoothd makes it
+    non-blocking (btio's server_cb), so the control reader's first recv() would fail at once
+    and drop the link; and it keeps its own copy of the socket, so close() alone would leave
+    the channel open and the iPhone would still count the keyboard as connected."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.setblocking(True)
+
+    def close(self):
+        try:
+            self.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        super().close()
+
+
 class Profile(dbus.service.Object):
     def __init__(self, bus, path, kind=None):
         super().__init__(bus, path)
@@ -636,7 +670,7 @@ class Profile(dbus.service.Object):
             os.close(fd)  # the root daemon owns the PSMs directly
             return
         addr = str(path).rsplit("dev_", 1)[-1].replace("_", ":")
-        incoming(addr, self.kind, socket.socket(fileno=fd))
+        incoming(addr, self.kind, HandedOver(fileno=fd))
 
     @dbus.service.method("org.bluez.Profile1", in_signature="o", out_signature="")
     def RequestDisconnection(self, path):
