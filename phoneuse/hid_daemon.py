@@ -495,7 +495,7 @@ def reconnect_loop():
     # connect) cuts the pause short.
     pause = 0
     while True:
-        reconnect_now.wait(30 if hid.connected else pause)
+        reconnect_now.wait(30 if hid.connected or released.is_set() else pause)
         woke = reconnect_now.is_set()
         reconnect_now.clear()
         if hid.connected or released.is_set():

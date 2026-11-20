@@ -252,6 +252,36 @@ def test_film_merges_still_frames_and_fits_budget():
     assert len(film.keep_changed(many)) == film.MAX_FRAMES
 
 
+def test_reconnect_loop_waits_while_released():
+    try:
+        from phoneuse import hid_daemon as d
+    except ImportError:  # Linux only (GLib)
+        return
+
+    class Stop(Exception):
+        pass
+
+    class Event:  # records the first wait's timeout, then ends the loop
+        def wait(self, timeout):
+            waits.append(timeout)
+            raise Stop
+
+    real = d.reconnect_now
+    d.reconnect_now = Event()
+    try:
+        for released, expected in ((True, 30), (False, 0)):  # released waits; disconnected dials at once
+            waits = []
+            (d.released.set if released else d.released.clear)()
+            try:
+                d.reconnect_loop()
+            except Stop:
+                pass
+            assert waits == [expected], (released, waits)
+    finally:
+        d.reconnect_now = real
+        d.released.clear()
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in list(globals().items()):
