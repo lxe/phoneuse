@@ -91,28 +91,30 @@ public sealed partial class MainWindow
     void FillFinishSettings()
     {
         var chosen = FrameFinish.Get(AppSettings.FrameFinish);
-        FinishName.Text = chosen.Group == "Phone Use" ? chosen.Name : $"{chosen.Name} · {chosen.Group}";
+        FinishName.Text = chosen.Group == "Phone Use" ? chosen.Name : $"{chosen.Name} · {PhoneModel.FinishGroupLabel(chosen.Group)}";
         FinishGroups.Children.Clear();
         // the colours of the phone that's mirroring come first
         var groups = FrameFinish.All.GroupBy(f => f.Group)
             .OrderBy(g => g.Key == _phone.FinishGroup ? 0 : 1);
         foreach (var group in groups)
         {
+            var label = PhoneModel.FinishGroupLabel(group.Key);
             FinishGroups.Children.Add(new TextBlock
             {
-                Text = group.Key == _phone.FinishGroup ? $"{group.Key} · your iPhone" : group.Key,
+                Text = group.Key == _phone.FinishGroup ? $"{label} · your iPhone" : label,
                 Margin = new Thickness(0, 10, 0, 2),
                 Opacity = 0.7,
                 Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+                TextWrapping = TextWrapping.Wrap,
             });
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            foreach (var f in group) row.Children.Add(Swatch(f, f.Id == chosen.Id));
-            FinishGroups.Children.Add(row);
+            var swatches = new VariableSizedWrapGrid { Orientation = Orientation.Horizontal, ItemWidth = 42, ItemHeight = 42 };
+            foreach (var f in group) swatches.Children.Add(Swatch(f, label, f.Id == chosen.Id));
+            FinishGroups.Children.Add(swatches);
         }
     }
 
     /// <summary>A round chip of the finish, ringed while it's the one chosen.</summary>
-    Button Swatch(FrameFinish f, bool selected)
+    Button Swatch(FrameFinish f, string label, bool selected)
     {
         var chip = new Ellipse
         {
@@ -147,7 +149,7 @@ public sealed partial class MainWindow
             Tag = f.Id,
         };
         ToolTipService.SetToolTip(button, f.Name);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, $"{f.Name}, {f.Group}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, $"{f.Name}, {label}");
         button.Click += (_, _) =>
         {
             AppSettings.FrameFinish = f.Id;

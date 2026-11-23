@@ -7,8 +7,10 @@ public enum BandMaterial
     Titanium,
     /// <summary>Bead-blasted: satin, a broad dim highlight, no lines.</summary>
     Aluminium,
-    /// <summary>Polished: mirror-like, a sharp bright highlight (stainless steel; also the Air's polished titanium).</summary>
+    /// <summary>Polished stainless steel: sharp reflections with a dark rim.</summary>
     Steel,
+    /// <summary>Polished titanium, as on iPhone Air and iPhone Duo.</summary>
+    PolishedTitanium,
 }
 
 /// <summary>One button on an upright phone's side: which side, and its top and bottom as fractions
@@ -89,6 +91,15 @@ public sealed record PhoneModel(string Name, double Glass, BandMaterial Material
     public static PhoneModel For(string? identifier) =>
         identifier != null && Models.TryGetValue(identifier, out var m) ? m : Default;
 
+    public static string FinishGroupLabel(string group)
+    {
+        var names = Models.Values.Where(m => m.FinishGroup == group).Select(m => m.Name).Distinct().ToArray();
+        return names.Length == 0 ? group : string.Join(" / ", names);
+    }
+
+    public static BandMaterial? FinishGroupMaterial(string group) =>
+        Models.Values.FirstOrDefault(m => m.FinishGroup == group)?.Material;
+
     static Dictionary<string, PhoneModel> Build()
     {
         var d = new Dictionary<string, PhoneModel>();
@@ -98,10 +109,13 @@ public sealed record PhoneModel(string Name, double Glass, BandMaterial Material
         // (name, glass, band, Action button?, finishes, corner, button layout, length mm, Camera Control's centre mm)
         Add("19,2", Make("iPhone 18 Pro", 0.018, Al, true, "iPhone 18 Pro", 62, Pro17, 150.01, 98.40));
         Add("19,3 19,7", Make("iPhone 18 Pro Max", 0.018, Al, true, "iPhone 18 Pro", 62, Pro17, 163.43, 111.82));
+        // The palette is available for the Duo using the generic geometry for either display.
+        Add("19,4", Default with { Name = "iPhone Duo", Material = BandMaterial.PolishedTitanium, FinishGroup = "iPhone Duo" });
         Add("18,1", Make("iPhone 17 Pro", 0.018, Al, true, "iPhone 17 Pro", 62, Pro17, 150.01, 98.40));
         Add("18,2", Make("iPhone 17 Pro Max", 0.018, Al, true, "iPhone 17 Pro", 62, Pro17, 163.43, 111.82));
         Add("18,3", Make("iPhone 17", 0.020, Al, true, "iPhone 17", 62, Iphone16, 149.61, 98.20));
-        Add("18,4", Make("iPhone Air", 0.020, St, true, "iPhone Air", 62, Air, 156.18, 104.77));  // titanium, but mirror-polished
+        Add("18,4", Make("iPhone Air", 0.020, BandMaterial.PolishedTitanium, true, "iPhone Air", 62, Air, 156.18, 104.77));
+        Add("18,5", Make("iPhone 17e", 0.030, Al, true, "iPhone 17e", 47.33, Iphone16e, 146.71));
         Add("17,1", Make("iPhone 16 Pro", 0.018, Ti, true, "iPhone 16 Pro", 62, Iphone16, 149.61, 98.19));
         Add("17,2", Make("iPhone 16 Pro Max", 0.018, Ti, true, "iPhone 16 Pro", 62, Iphone16, 163.03, 111.62));
         Add("17,3", Make("iPhone 16", 0.027, Al, true, "iPhone 16", 55, Iphone16, 147.64, 96.23));
@@ -113,19 +127,20 @@ public sealed record PhoneModel(string Name, double Glass, BandMaterial Material
         Add("15,5", Make("iPhone 15 Plus", 0.028, Al, false, "iPhone 15", 55, Plus15, 160.89));
         Add("15,2", Make("iPhone 14 Pro", 0.029, St, false, "iPhone 14 Pro", 55, Pro14, 147.46));
         Add("15,3", Make("iPhone 14 Pro Max", 0.029, St, false, "iPhone 14 Pro", 55, Pro14, 160.71));
-        Add("14,7", Make("iPhone 14", 0.031, Al, false, null, 47.33, Iphone14, 146.71));
-        Add("14,8", Make("iPhone 14 Plus", 0.031, Al, false, null, 53.33, Iphone14, 160.84));
-        Add("14,2", Make("iPhone 13 Pro", 0.031, St, false, null, 47.33, Iphone13, 146.71));
-        Add("14,3", Make("iPhone 13 Pro Max", 0.031, St, false, null, 53.33, Iphone13, 160.84));
-        Add("14,5", Make("iPhone 13", 0.031, Al, false, null, 47.33, Iphone13, 146.70));
-        Add("14,4", Make("iPhone 13 mini", 0.031, Al, false, null, 44, Mini13, 131.50));
-        Add("13,3", Make("iPhone 12 Pro", 0.032, St, false, null, 47.33, Iphone12, 146.71));
-        Add("13,4", Make("iPhone 12 Pro Max", 0.032, St, false, null, 53.33, ProMax12, 160.84));
-        Add("13,2", Make("iPhone 12", 0.032, Al, false, null, 47.33, Iphone12, 146.71));
-        Add("13,1", Make("iPhone 12 mini", 0.032, Al, false, null, 44, Mini12, 131.50));
+        Add("14,7", Make("iPhone 14", 0.031, Al, false, "iPhone 14", 47.33, Iphone14, 146.71));
+        Add("14,8", Make("iPhone 14 Plus", 0.031, Al, false, "iPhone 14", 53.33, Iphone14, 160.84));
+        Add("14,2", Make("iPhone 13 Pro", 0.031, St, false, "iPhone 13 Pro", 47.33, Iphone13, 146.71));
+        Add("14,3", Make("iPhone 13 Pro Max", 0.031, St, false, "iPhone 13 Pro", 53.33, Iphone13, 160.84));
+        Add("14,5", Make("iPhone 13", 0.031, Al, false, "iPhone 13", 47.33, Iphone13, 146.70));
+        Add("14,4", Make("iPhone 13 mini", 0.031, Al, false, "iPhone 13", 44, Mini13, 131.50));
+        Add("13,3", Make("iPhone 12 Pro", 0.032, St, false, "iPhone 12 Pro", 47.33, Iphone12, 146.71));
+        Add("13,4", Make("iPhone 12 Pro Max", 0.032, St, false, "iPhone 12 Pro", 53.33, ProMax12, 160.84));
+        Add("13,2", Make("iPhone 12", 0.032, Al, false, "iPhone 12", 47.33, Iphone12, 146.71));
+        Add("13,1", Make("iPhone 12 mini", 0.032, Al, false, "iPhone 12", 44, Mini12, 131.50));
         // no drawings online: MainWindow's estimated buttons
-        Add("12,3 12,5", new("iPhone 11 Pro", 0.032, St, false, null, null, null, 39));
-        Add("12,1", new("iPhone 11", 0.060, Al, false, null, null, null, 41.5));
+        Add("12,3", new("iPhone 11 Pro", 0.032, St, false, null, null, "iPhone 11 Pro", 39));
+        Add("12,5", new("iPhone 11 Pro Max", 0.032, St, false, null, null, "iPhone 11 Pro", 39));
+        Add("12,1", new("iPhone 11", 0.060, Al, false, null, null, "iPhone 11", 41.5));
         Add("11,8", new("iPhone XR", 0.060, Al, false, null, null, null, 41.5));
         Add("11,2 11,4 11,6", new("iPhone XS", 0.032, St, false, null, null, null, 39));
         Add("10,3 10,6", new("iPhone X", 0.032, St, false, null, null, null, 39));

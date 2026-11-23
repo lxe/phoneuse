@@ -13,9 +13,8 @@ public sealed record FrameFinish(string Id, string Name, string Group,
     /// <summary>The colour shown on its swatch: the finish itself.</summary>
     public Color Swatch => Base;
 
-    /// <summary>The band seen face-on, measured from Apple's photos of the phone (the middle of the band,
-    /// on a phone facing the camera). The swatch colours aren't on the band's scale: Glacier's band has
-    /// about a quarter of its swatch's light, Silver's about half.</summary>
+    /// <summary>The band tone referenced from Apple's product photos. The AppleDB swatch can differ
+    /// from the band, especially when the back is matte and the sides are polished steel.</summary>
     public Color? MeasuredBand { get; init; }
 
     /// <summary>The band's tone the renderer starts from: measured, or until then estimated from the
@@ -68,6 +67,9 @@ public sealed record FrameFinish(string Id, string Name, string Group,
         From("18pro-silver", "Silver", "iPhone 18 Pro", 0xF7F7F7) with { MeasuredBand = Hex(0xA9A9A7) },
         From("18pro-black", "Black", "iPhone 18 Pro", 0x3C3C3C) with { MeasuredBand = Hex(0x1A1A1C) },
 
+        From("duo-night-sky", "Night Sky", "iPhone Duo", 0x394452),
+        From("duo-star-white", "Star White", "iPhone Duo", 0xF7F6F5),
+
         From("17pro-cosmic-orange", "Cosmic Orange", "iPhone 17 Pro", 0xF8833E) with { MeasuredBand = Hex(0xC67643) },
         From("17pro-deep-blue", "Deep Blue", "iPhone 17 Pro", 0x4A5680) with { MeasuredBand = Hex(0x3A4053) },
         From("17pro-silver", "Silver", "iPhone 17 Pro", 0xE7E7E7) with { MeasuredBand = Hex(0xACACAA) },
@@ -82,6 +84,10 @@ public sealed record FrameFinish(string Id, string Name, string Group,
         From("17-mist-blue", "Mist Blue", "iPhone 17", 0xA6BDDD) with { MeasuredBand = Hex(0x96A8C2) },
         From("17-sage", "Sage", "iPhone 17", 0xBAC79C) with { MeasuredBand = Hex(0x9AA887) },
         From("17-white", "White", "iPhone 17", 0xF7F7F5) with { MeasuredBand = Hex(0xCACAC8) },
+
+        From("17e-black", "Black", "iPhone 17e", 0x404040),
+        From("17e-soft-pink", "Soft Pink", "iPhone 17e", 0xFCE7E6),
+        From("17e-white", "White", "iPhone 17e", 0xF6F6F4),
 
         From("16pro-black", "Black Titanium", "iPhone 16 Pro", 0x4F4F4F) with { MeasuredBand = Hex(0x232323) },
         From("16pro-white", "White Titanium", "iPhone 16 Pro", 0xECECEA) with { MeasuredBand = Hex(0xA6A29F) },
@@ -108,10 +114,58 @@ public sealed record FrameFinish(string Id, string Name, string Group,
         From("15-pink", "Pink", "iPhone 15", 0xFCE8E8) with { MeasuredBand = Hex(0xD2B8BB) },
         From("15-yellow", "Yellow", "iPhone 15", 0xFCFBE4) with { MeasuredBand = Hex(0xD0CCAF) },
 
-        From("14pro-deep-purple", "Deep Purple", "iPhone 14 Pro", 0x595261),
-        From("14pro-gold", "Gold", "iPhone 14 Pro", 0xF3E6CC),
-        From("14pro-silver", "Silver", "iPhone 14 Pro", 0xF0F2F2),
-        From("14pro-space-black", "Space Black", "iPhone 14 Pro", 0x3B3937),
+        // Middle of the flat sides in Apple's iPhone 14 Pro Newsroom colour carousel.
+        From("14pro-deep-purple", "Deep Purple", "iPhone 14 Pro", 0x595261) with { MeasuredBand = Hex(0x8F819B) },
+        From("14pro-gold", "Gold", "iPhone 14 Pro", 0xF3E6CC) with { MeasuredBand = Hex(0xF4E6CB) },
+        From("14pro-silver", "Silver", "iPhone 14 Pro", 0xF0F2F2) with { MeasuredBand = Hex(0xEBECEE) },
+        From("14pro-space-black", "Space Black", "iPhone 14 Pro", 0x3B3937) with { MeasuredBand = Hex(0x2E2A27) },
+
+        From("14-blue", "Blue", "iPhone 14", 0xA8B8C8),
+        From("14-midnight", "Midnight", "iPhone 14", 0x192928),
+        From("14-purple", "Purple", "iPhone 14", 0xE8D8E8),
+        From("14-red", "(PRODUCT)RED", "iPhone 14", 0xF80628),
+        From("14-starlight", "Starlight", "iPhone 14", 0xF8F8E7),
+        From("14-yellow", "Yellow", "iPhone 14", 0xF8D868),
+
+        // Band tones estimated from the Newsroom lineup images, accounting for reflections between phones.
+        From("13pro-alpine-green", "Alpine Green", "iPhone 13 Pro", 0x546554) with { MeasuredBand = Hex(0x68786D) },
+        From("13pro-gold", "Gold", "iPhone 13 Pro", 0xF6E4C7) with { MeasuredBand = Hex(0xC1A67E) },
+        From("13pro-graphite", "Graphite", "iPhone 13 Pro", 0x4C4C4A) with { MeasuredBand = Hex(0x737470) },
+        From("13pro-sierra-blue", "Sierra Blue", "iPhone 13 Pro", 0x93A9C0) with { MeasuredBand = Hex(0x859BB4) },
+        From("13pro-silver", "Silver", "iPhone 13 Pro", 0xF1F1E7) with { MeasuredBand = Hex(0xDFE0DF) },
+
+        From("13-blue", "Blue", "iPhone 13", 0x235D7B),
+        From("13-green", "Green", "iPhone 13", 0x334434),
+        From("13-midnight", "Midnight", "iPhone 13", 0x151D23),
+        From("13-pink", "Pink", "iPhone 13", 0xFCDDD8),
+        From("13-red", "(PRODUCT)RED", "iPhone 13", 0x96060D),
+        From("13-starlight", "Starlight", "iPhone 13", 0xF9F4EE),
+
+        // Estimates from the iPhone 12 Pro press images and finish swatches.
+        From("12pro-gold", "Gold", "iPhone 12 Pro", 0xFCEFD9) with { MeasuredBand = Hex(0xBFA475) },
+        From("12pro-graphite", "Graphite", "iPhone 12 Pro", 0x494846) with { MeasuredBand = Hex(0x666563) },
+        From("12pro-pacific-blue", "Pacific Blue", "iPhone 12 Pro", 0x304B55) with { MeasuredBand = Hex(0x57788E) },
+        From("12pro-silver", "Silver", "iPhone 12 Pro", 0xF3F4F0) with { MeasuredBand = Hex(0xDBDDDE) },
+
+        From("12-black", "Black", "iPhone 12", 0x221C24),
+        From("12-blue", "Blue", "iPhone 12", 0x033356),
+        From("12-green", "Green", "iPhone 12", 0xDDF4D8),
+        From("12-purple", "Purple", "iPhone 12", 0xAFA9DF),
+        From("12-red", "(PRODUCT)RED", "iPhone 12", 0xDF3434),
+        From("12-white", "White", "iPhone 12", 0xFDF4F4),
+
+        // The curved iPhone 11 Pro bands catch several reflections in the Newsroom lineup image.
+        From("11pro-gold", "Gold", "iPhone 11 Pro", 0xF4D2B9) with { MeasuredBand = Hex(0xDAB394) },
+        From("11pro-midnight-green", "Midnight Green", "iPhone 11 Pro", 0x414A46) with { MeasuredBand = Hex(0x597069) },
+        From("11pro-silver", "Silver", "iPhone 11 Pro", 0xE0E0D8) with { MeasuredBand = Hex(0xDCDDDC) },
+        From("11pro-space-gray", "Space Gray", "iPhone 11 Pro", 0x3A3839) with { MeasuredBand = Hex(0x626062) },
+
+        From("11-black", "Black", "iPhone 11", 0x1E1E1E),
+        From("11-green", "Green", "iPhone 11", 0xABDDCA),
+        From("11-purple", "Purple", "iPhone 11", 0xD7D1E0),
+        From("11-red", "(PRODUCT)RED", "iPhone 11", 0xB6062A),
+        From("11-white", "White", "iPhone 11", 0xFBF9F2),
+        From("11-yellow", "Yellow", "iPhone 11", 0xFEE581),
     };
 
     public static FrameFinish Get(string? id) => All.FirstOrDefault(f => f.Id == id) ?? All[0];

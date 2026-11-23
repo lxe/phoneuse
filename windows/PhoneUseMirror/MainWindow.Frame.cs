@@ -47,9 +47,10 @@ public sealed partial class MainWindow
         double s = Root.XamlRoot?.RasterizationScale ?? 1;
         int w = (int)Math.Round(pw * s), h = (int)Math.Round(ph * s);
         if (w <= 0 || h <= 0) return;
+        var material = PhoneModel.FinishGroupMaterial(_finish.Group) ?? _phone.Material;
         // what's drawn: the finish, the metal, and which buttons where (by count and the first one's place)
         var b0 = _bandButtons.Count > 0 ? _bandButtons[0] : default;
-        string key = $"{_finish.Id}|{_phone.Material}|{_bandButtons.Count}|{b0.x * s:F0},{b0.y * s:F0}|{_hdr}";
+        string key = $"{_finish.Id}|{material}|{_bandButtons.Count}|{b0.x * s:F0},{b0.y * s:F0}|{_hdr}";
         if (_bandDrawn == (w, h, key) && BandImage.Source != null)
         {
             // only the DIP size can have moved
@@ -60,7 +61,7 @@ public sealed partial class MainWindow
         try
         {
             var buttons = _bandButtons.Select(b => (b.x * s, b.y * s, b.w * s, b.h * s)).ToList();
-            var pixels = BandPixels(w, h, k * s, t * s, r * s, _finish, _phone.Material, buttons, _hdr);
+            var pixels = BandPixels(w, h, k * s, t * s, r * s, _finish, material, buttons, _hdr);
             var bmp = new WriteableBitmap(w, h);
             using (var stream = bmp.PixelBuffer.AsStream()) stream.Write(pixels, 0, pixels.Length);
             bmp.Invalidate();
@@ -84,9 +85,8 @@ public sealed partial class MainWindow
     /// <summary>The band and its side buttons, premultiplied BGRA, w x h pixels; k (the buttons' room),
     /// t (the band's width), r (its outer corner) and the buttons' rectangles in pixels.
     ///
-    /// Lit so that metal facing you is exactly the finish's colour (FrameFinish.Base, AppleDB's):
-    /// the light, the room's reflection and the highlight only change it where the surface turns
-    /// toward or away from them.</summary>
+    /// Lit from the finish's band tone (FrameFinish.Band), with reflections that vary as the
+    /// surface turns toward or away from the lights.</summary>
     static byte[] BandPixels(int w, int h, double k, double t, double r, FrameFinish f, BandMaterial material,
         List<(double x, double y, double w, double h)> buttons, bool hdr)
     {
@@ -97,7 +97,8 @@ public sealed partial class MainWindow
         // clear oxide layer adds a little untinted sheen, the dusty look of its bands in Apple's photos).
         var (shine, specAmount, brushed, tinted) = material switch
         {
-            BandMaterial.Steel => (160f, 0.9f, 0.012f, 0.85f),
+            BandMaterial.Steel => (160f, 0.9f, 0f, 0.85f),
+            BandMaterial.PolishedTitanium => (160f, 0.9f, 0.012f, 0.85f),
             BandMaterial.Aluminium => (14f, 0.25f, 0.0f, 0.6f),
             _ => (40f, 0.5f, 0.07f, 0.8f),
         };
@@ -113,6 +114,7 @@ public sealed partial class MainWindow
         var tone = SrgbToLinear(ToVec(f.Band));
         float toneMax = Math.Max(tone.X, Math.Max(tone.Y, tone.Z));
         var specColor = Vector3.Lerp(new Vector3(toneMax), tone, tinted);  // as bright as the tone, its hue kept by `tinted`
+        var steelTint = Vector3.Lerp(Vector3.One, tone / Math.Max(toneMax, 0.001f), 0.55f);
         var plastic = LinearToSrgb(tone * 0.35f);                           // the antenna lines: a darker shade of it
 
         // light from the top left and in front (y down, as the pixels)
@@ -127,6 +129,9 @@ public sealed partial class MainWindow
         Vector3 Shade(Vector3 n, out float diff, float rim = 1)
         {
             diff = Math.Max(0, Vector3.Dot(n, L));
+            if (material == BandMaterial.Steel)
+                return LinearToSrgb(ShadeSteel(n, tone, steelTint, rim));
+
             float lit = (0.2f + 0.8f * diff) / flatLit;
             float room = -0.1f * n.Y;  // facing up: a little of the room's light; down: its shade
             float spec = Math.Max(0, MathF.Pow(Math.Max(0, Vector3.Dot(n, Hh)), shine) - flatSpec);
@@ -236,6 +241,38 @@ public sealed partial class MainWindow
             }
         }
         return px;
+    }
+
+    // A large softbox makes the broad reflection, with a narrow bright strip inside it. A weaker
+    // light lifts the opposite edge. At grazing angles the steel reflects a darker part of the room.
+    static Vector3 ShadeSteel(Vector3 normal, Vector3 tone, Vector3 tint, float rim)
+    {
+        static float SmoothStep(float low, float high, float value)
+        {
+            float t = Math.Clamp((value - low) / (high - low), 0, 1);
+            return t * t * (3 - 2 * t);
+        }
+
+        var reflection = Vector3.Reflect(-Vector3.UnitZ, normal);
+        float acrossLights = -0.75f * reflection.X - 0.66f * reflection.Y;
+        float front = SmoothStep(-0.12f, 0.42f, reflection.Z);
+        float softbox = SmoothStep(0.015f, 0.18f, acrossLights) * (1 - SmoothStep(0.55f, 0.82f, acrossLights));
+        float strip = SmoothStep(0.10f, 0.24f, acrossLights) * (1 - SmoothStep(0.38f, 0.61f, acrossLights));
+        float fill = SmoothStep(0.07f, 0.28f, -acrossLights) * (1 - SmoothStep(0.57f, 0.80f, -acrossLights));
+
+        // Schlick's Fresnel approximation: the reflection becomes less tinted at grazing angles.
+        var reflectance = Vector3.Lerp(tone, Vector3.One, MathF.Pow(1 - normal.Z, 5));
+        float illumination = 0.22f + front * (0.72f + 0.44f * softbox + 0.18f * strip + 0.30f * fill);
+        var glints = tint * (front * (0.27f * strip + 0.10f * fill));
+        var color = (reflectance * illumination + glints) * rim;
+
+        // Roll bright reflections into SDR together so individual channels don't clip to white.
+        const float shoulder = 0.82f;
+        float peak = Math.Max(color.X, Math.Max(color.Y, color.Z));
+        if (peak <= shoulder) return color;
+        float range = 1 - shoulder;
+        float mapped = 1 - range / (1 + (peak - shoulder) / range);
+        return color * (mapped / peak);
     }
 
     /// <summary>Signed distance to the band's outlines, with the corners Squircle draws; negative inside.</summary>
