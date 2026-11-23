@@ -97,6 +97,7 @@ public sealed partial class MainWindow
         SetupResume.Margin = new Thickness(0, top, 0, 0);
         AgentPanel.Margin = new Thickness(0, 0, 0, bottom);
         SetupOverlay.Padding = new Thickness(side, top, side, 0);
+        CalibrationOverlay.Padding = new Thickness(side, top, side, 0);  // the calibration flow, like the checklist
         // App pages replace the video, so they do not need the phone's island safe area.
         AboutOverlay.Padding = new Thickness(0, 8, 0, 0);
     }

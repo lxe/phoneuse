@@ -61,7 +61,8 @@ points if any value is > 1 (screen_points in ~/.config/phoneuse/config.toml):
                                 the ESP32 Bluetooth bridge: the phone pairs with it,
                                 phoneuse drives it over Wi-Fi (setup is over BLE)
   phoneuse calibrate            measure how far the pointer moves on this phone (~10 s;
-                                runs by itself the first time a phone's pointer is on)
+                                runs by itself the first time a phone's pointer is on;
+                                upright only: --wait waits for the phone to be turned upright)
   phoneuse where                debugging: where the pointer appears (needs Pointer
                                Control colour Orange)
 
@@ -239,28 +240,43 @@ def follow_sender(stream, echo=False):
 def calibrate_when_ready(name, wait=180):
     """A phone without a calibration started mirroring: once its Bluetooth link is
     up, it is unlocked and its pointer is on, measure it (about 10 s, hovering
-    only). If the pointer is off, `phoneuse cursor on` calibrates after switching it."""
-    until = time.time() + wait
-    while time.time() < until:
-        time.sleep(5)
-        if phones.current() != name or not phones.needs_calibration(name):
-            return
-        try:
-            st = Hid().cmd("status")
-            from . import unlock
-            if "connected=True" not in st or not screen.mirror_live() or unlock.locked(screen_text):
-                continue
-            h = hid()
-            state = cursor_state(h)
-            if state == "unknown":
-                continue
-            if state == "on":
-                print(time.strftime("%H:%M:%S"), calibrate.calibrate(h, name, log=lambda *_: None, alive=agent_turn), flush=True)
-            agent_done()
-            return
-        except Exception as e:
-            print(time.strftime("%H:%M:%S"), f"calibration skipped: {e}", flush=True)
-            return
+    only). If the pointer is off, `phoneuse cursor on` calibrates after switching it.
+    Upright only: while the phone is sideways it waits (as long as the phone mirrors)
+    and measures once it's turned upright; a spoiled measurement is tried again."""
+    link = {}
+
+    def ready():
+        from . import unlock
+        if "connected=True" not in Hid().cmd("status") or not screen.mirror_live():
+            return "waiting_link"
+        if unlock.locked(screen_text):
+            return "waiting_unlock"
+        if calibrate.sideways():  # cursor_state below moves the pointer: not while sideways
+            return None
+        link["h"] = link.get("h") or hid()
+        state = cursor_state(link["h"])
+        return {"on": None, "off": "stop"}.get(state, "waiting_pointer")
+
+    def say(msg):
+        print(time.strftime("%H:%M:%S"), msg, flush=True)
+
+    time.sleep(5)
+    try:
+        result = calibrate.when_ready(
+            name, lambda: link.get("h") or hid(), ready=ready, alive=agent_turn, wait=wait, log=say,
+            still_wanted=lambda: phones.current() == name and phones.needs_calibration(name))
+        if result:
+            say(result)
+    except SystemExit:  # agent_turn/hid() refused (the owner said no, or no app is paired)
+        calibrate.set_status("failed", name, message="Phone Use couldn't use the phone's pointer to measure it.")
+        say("calibration skipped: the agent gate refused it")
+        return
+    except Exception as e:
+        calibrate.set_status("failed", name, message=str(e))
+        say(f"calibration skipped: {e}")
+        return
+    if link.get("h"):
+        agent_done()
 
 
 def note_model(model):
@@ -890,7 +906,11 @@ def cursor_set(h, on):
             state = cursor_state(h)
             if state == want:
                 if on and phones.needs_calibration():  # first time on: measure it
-                    return f"cursor {state}; " + calibrate.calibrate(h, alive=agent_turn)
+                    try:
+                        return f"cursor {state}; " + calibrate.calibrate(h, alive=agent_turn)
+                    except calibrate.Sideways:
+                        return (f"cursor {state}; not calibrated yet: the phone is sideways. Turn it upright and "
+                                "run `phoneuse calibrate`")
                 return f"cursor {state}"
     if not heard:
         return (f"cursor {state} (wanted {want}): Siri didn't open when the Siri key was held. "
@@ -2316,7 +2336,15 @@ def _main():
         else:
             die("usage: phoneuse cursor [on|off]")
     elif cmd == "calibrate":  # measure the mirroring phone's pointer (drags use it)
-        print(calibrate.calibrate(h, alive=agent_turn))
+        name = phones.current()
+        if "--wait" in args and name:  # wait (up to 5 minutes) for the phone to be turned upright
+            print(calibrate.when_ready(name, lambda: h, alive=agent_turn, wait=300, poll=2.0, upright_wait=300,
+                                       log=lambda m: print(m, flush=True)) or "calibrate: gave up waiting")
+        else:
+            try:
+                print(calibrate.calibrate(h, name, alive=agent_turn))
+            except calibrate.Sideways as e:
+                die(str(e))
     elif cmd == "tap-on":
         print(tap_on(h, " ".join(args), force=force))
     elif cmd == "notifications-read":

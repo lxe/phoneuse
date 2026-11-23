@@ -195,6 +195,7 @@ public sealed partial class MainWindow : Window
         Layout();
         ShowAgent();
         UpdateNote();
+        OnCalibration(m);
     }
 
     // ---------------------------------------------------------------- notes
@@ -296,6 +297,7 @@ public sealed partial class MainWindow : Window
         FaceScreen(w > h);
         Turned();
         Layout();
+        ShowCalibration();  // upright now: the calibration starts (it measures an upright phone only)
     }
 
     /// <summary>The screen's size in points, upright or sideways.</summary>
@@ -484,7 +486,8 @@ public sealed partial class MainWindow : Window
     bool Active => _live && _playing && _agent != "driving" && !Covered;
 
     /// <summary>The setup checklist or About is on the phone's screen: input goes to it, not the phone.</summary>
-    bool Covered => SetupOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible;
+    bool Covered => SetupOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible
+                    || CalibrationOverlay.Visibility == Visibility.Visible;
 
     (double x, double y) At(PointerRoutedEventArgs e)
     {

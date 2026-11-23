@@ -28,7 +28,7 @@ import time
 
 from aiohttp import web
 
-from . import orientation, screen, unlock
+from . import calibrate, orientation, screen, unlock
 from .agent_session import AgentSession, set_start_setting, start_setting
 from .config import CFG, IS_WINDOWS, NAME, config_path, mirroring_model, runtime_path
 from .hidclient import Hid
@@ -166,6 +166,7 @@ class Mirror:
         self.hover_at = PARK  # where the page's pointer last was (screen fractions)
         self.unlocks = None
         self.sessions = None
+        self.calibration = None  # calibrate.status(): where the pointer's measurement stands, for the pages
 
     def get_hid(self):
         if self.hid is None:
@@ -174,6 +175,48 @@ class Mirror:
 
     def live(self):
         return self.mirroring and self.hub_live
+
+    # ---- the pointer's calibration (calibrate.py): upright only ----
+    def calibrating(self):
+        return bool(self.calibration and self.calibration.get("state") == "running")
+
+    def calibration_state(self):
+        """calibrate.status() for the pages, with its age (s), or None."""
+        c = calibrate.status()
+        if not c:
+            return None
+        return {k: c.get(k) for k in ("state", "phone", "step", "steps", "attempt", "message")} |             {"age": round(time.time() - float(c.get("at") or 0), 1)}
+
+    def start_calibration(self):
+        """The owner asked to measure the pointer (the page or the Windows app): measure
+        the mirroring phone as soon as it's upright, here (this process is the owner's, so
+        the agent gate doesn't apply). Returns an error, or None once it started."""
+        from . import phones
+        name = phones.current()
+        if not name or not self.live():
+            return "The iPhone isn't mirroring to this PC."
+        if not self.bluetooth:
+            return "The iPhone's Bluetooth link (its mouse) isn't connected."
+        if calibrate.busy():
+            return None  # already measuring
+        calibrate.set_status("waiting_upright" if calibrate.sideways() else "running", name, step=0,
+                             steps=len(calibrate.SIZES))
+
+        def ready():
+            return None if self.live() and self.bluetooth else "waiting_link"
+
+        def go():
+            try:
+                r = calibrate.when_ready(name, Hid, ready=ready, wait=60, upright_wait=600, poll=1.0, log=log,
+                                         still_wanted=lambda: phones.current() == name)
+                log(r or "calibration: stopped waiting")
+            except Exception as e:  # noqa: BLE001 - the link dropped mid-measurement
+                calibrate.set_status("failed", name, message=f"The measurement stopped: {e}")
+                log("calibration failed:", e)
+            finally:
+                self.park()
+        threading.Thread(target=go, daemon=True).start()
+        return None
 
     # ---- keep awake: stop Auto-Lock while nobody uses the phone ----
     AWAKE_EVERY = 1.0  # seconds between nudges
@@ -204,6 +247,8 @@ class Mirror:
         while True:
             await asyncio.sleep(self.AWAKE_EVERY)
             if not self.awake or not self.live() or time.time() - self.last_input_at < self.AWAKE_QUIET:
+                continue
+            if self.calibrating():  # a nudge would move the pointer it's measuring
                 continue
             try:
                 x, y = PARK
@@ -362,7 +407,11 @@ class Mirror:
             if turned:
                 self.screen = orientation.points_for(size)
                 log(f"phone turned: screen {self.screen[0]} x {self.screen[1]} pt")
-            changed = mirroring != self.mirroring or bt != self.bluetooth or turned
+            cal = await loop.run_in_executor(None, self.calibration_state)
+            was = self.calibration
+            self.calibration = cal
+            cal_changed = (cal or {}).get("state") != (was or {}).get("state") or                 (cal or {}).get("step") != (was or {}).get("step")
+            changed = mirroring != self.mirroring or bt != self.bluetooth or turned or cal_changed
             if bt and not self.bluetooth:  # (re)connected: rest the pointer where it touches nothing
                 self.hover_at = PARK
                 try:
@@ -409,6 +458,8 @@ class Tab:
         msg = json.dumps({"type": "state", "live": live, "mirroring": self.mirror.mirroring,
                           "agent": self.told_agent, "bluetooth": self.mirror.bluetooth,
                           "awake": self.mirror.awake, "stale": self.mirror.stale,
+                          # where the pointer's measurement stands (calibrate.status), or None
+                          "calibration": self.mirror.calibration,
                           "name": NAME, "screen": self.mirror.screen,
                           # the model identifier ("iPhone17,1"): the mirror window draws its frame
                           "model": mirroring_model(),
@@ -438,7 +489,8 @@ class Tab:
             return
         # While an agent drives, the page's mouse and keyboard don't reach the phone
         # (mixing in input would confuse the agent); the user takes over first.
-        if t == "blur" or not (self.playing and self.mirror.live()) or self.mirror.agent() == "driving":
+        # Nor while the pointer is being measured: a move would spoil the measurement.
+        if t == "blur" or not (self.playing and self.mirror.live()) or self.mirror.agent() == "driving"                 or self.mirror.calibrating():
             self.pointer.release()
             self.keys.release_all()
             return
@@ -952,7 +1004,7 @@ def app(mirror):
                 calibrated = None if not phone else not phones.needs_calibration(phone)
             except Exception:  # noqa: BLE001
                 calibrated = None
-            return {"claude": claude_setup.state(), "firewall": netcheck.detect(),
+            return {"calibration": mirror.calibration_state(), "claude": claude_setup.state(), "firewall": netcheck.detect(),
                     "confirmed": netcheck.confirmed(), "paired": paired, "pc_bluetooth": bluetooth_setup.on(),
                     "calibrated": calibrated, "pc": os.environ.get("COMPUTERNAME") or socket.gethostname(),
                     "input_choice": overview.input_choice()}
@@ -975,6 +1027,18 @@ def app(mirror):
             "unlock": {"id": up["id"]} if up else None}
         return web.json_response(out)
     a.router.add_get("/api/app", app_state)
+
+    async def calibrate_pointer(req):
+        # The page's or the Windows app's "Calibrate": measure the pointer once the phone is upright.
+        if not same_origin(req):
+            return web.Response(status=403)
+        err = mirror.start_calibration()
+        mirror.calibration = mirror.calibration_state()
+        mirror.broadcast_state()
+        if err:
+            return web.json_response({"ok": False, "error": err}, status=409)
+        return web.json_response({"ok": True, "calibration": mirror.calibration})
+    a.router.add_post("/api/calibrate", calibrate_pointer)
 
     async def setup_firewall(req):
         """The setup checklist's firewall step: open the ports (Windows: one UAC prompt)."""

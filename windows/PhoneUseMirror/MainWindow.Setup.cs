@@ -35,6 +35,7 @@ public sealed partial class MainWindow
         SetupOverlay.Visibility = Visibility.Visible;
         SetupResume.Visibility = Visibility.Collapsed;
         PairingBar.IsOpen = false;
+        CalibrationOverlay.Visibility = Visibility.Collapsed;
         _conn.Send(new { t = "blur" });
         if (_setupPoll == null)
         {
@@ -51,6 +52,7 @@ public sealed partial class MainWindow
     {
         SetupOverlay.Visibility = Visibility.Collapsed;
         _setupPoll?.Stop();
+        ShowCalibration();
         int left = SetupLeft();
         SetupResume.Content = left > 0 ? $"Finish setup ({left} left)" : "Finish setup";
         SetupResume.Visibility = resume && !AppSettings.SetupDone ? Visibility.Visible : Visibility.Collapsed;
@@ -81,8 +83,9 @@ public sealed partial class MainWindow
             if (j?["setup"] is JsonArray items)
             {
                 _setupItems = items;
-                // AssistiveTouch: done once you say so (the pointer's measurement still runs by itself)
-                if (AppSettings.AssistiveTouchDone)
+                // AssistiveTouch: done once you say so (the pointer's measurement still runs by itself),
+                // unless that measurement waits for you (turn the phone upright) or failed
+                if (AppSettings.AssistiveTouchDone && CalState is not ("waiting_upright" or "running" or "failed"))
                     foreach (var i in items.OfType<JsonObject>().Where(i => (string?)i["id"] == "pointer"))
                         i["done"] = true;
             }
@@ -283,11 +286,20 @@ public sealed partial class MainWindow
 
     FrameworkElement? StepAction(string id, string? action, bool done)
     {
-        if (!done && id == "pointer")  // nothing to check from here: a box to tick
+        if (!done && id == "pointer")  // nothing to check from here: a box to tick, and the calibration flow
         {
-            var ok = new Button { Content = "Done", Style = Res<Style>("AccentButtonStyle") };
-            ok.Click += async (_, _) => { AppSettings.AssistiveTouchDone = true; await LoadSetup(); };
-            return ok;
+            var pr = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            if (!AppSettings.AssistiveTouchDone)
+            {
+                var ok = new Button { Content = "Done", Style = Res<Style>("AccentButtonStyle") };
+                ok.Click += async (_, _) => { AppSettings.AssistiveTouchDone = true; await LoadSetup(); };
+                pr.Children.Add(ok);
+            }
+            var cal = new Button { Content = CalState == "failed" ? "Calibrate again…" : "Calibrate…" };
+            if (AppSettings.AssistiveTouchDone) cal.Style = Res<Style>("AccentButtonStyle");
+            cal.Click += (_, _) => ShowCalibrationFlow();
+            pr.Children.Add(cal);
+            return pr;
         }
         if (done || action == null) return null;
         bool busy = _setupBusy == id;

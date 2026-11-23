@@ -153,6 +153,36 @@
   #ask .timer i { display: block; height: 100%; background: rgba(28, 19, 0, .55); transform-origin: left;
                   animation: asktime 120s linear forwards; }
   @keyframes asktime { to { transform: scaleX(0); } }
+  /* the pointer's calibration (upright only): the same toast, in blue, as this page telling, not asking */
+  #cal { position: fixed; z-index: 29; inset: 0; pointer-events: none; }
+  #cal .sheet { pointer-events: auto; position: absolute; left: 16px; right: 16px; bottom: 16px; overflow: hidden;
+                border-radius: 24px; padding: 20px 22px 22px; color: #fff;
+                display: grid; grid-template-columns: 56px 1fr auto; gap: 4px 16px; align-items: center;
+                background: linear-gradient(120deg, #0a84ff, #5e5ce6);
+                box-shadow: 0 0 0 1px rgba(10, 132, 255, .6), 0 -12px 60px rgba(10, 132, 255, .35), 0 20px 50px rgba(0, 0, 0, .5);
+                animation: askin .4s cubic-bezier(.2, .9, .3, 1.05); }
+  #cal .ico { grid-row: span 2; width: 56px; height: 56px; border-radius: 16px; background: rgba(255, 255, 255, .16);
+              display: grid; place-items: center; }
+  #cal .ico svg { width: 30px; height: 30px; }
+  #cal.upright .ico svg { animation: calturn 2.4s ease-in-out infinite; }
+  @keyframes calturn { 0%, 15% { transform: rotate(90deg); } 45%, 100% { transform: rotate(0deg); } }
+  #cal.running .ico svg { animation: calspin 1.2s linear infinite; }
+  @keyframes calspin { to { transform: rotate(360deg); } }
+  #calTitle { font-size: 20px; font-weight: 750; line-height: 1.2; align-self: end; }
+  #calText { font-size: 15px; line-height: 1.35; opacity: .85; align-self: start; }
+  #cal .btns { grid-column: 3; grid-row: 1 / span 2; display: flex; gap: 10px; }
+  #cal .btn { height: 48px; min-width: 110px; padding: 0 20px; border-radius: 14px; font-weight: 700; font-size: 16px;
+              background: rgba(255, 255, 255, .16); color: #fff; }
+  #cal .btn:hover { background: rgba(255, 255, 255, .26); }
+  #cal .btn.primary { background: #fff; color: #0a3d91; }
+  #cal .btn[hidden] { display: none; }
+  #cal .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(255, 255, 255, .15); }
+  #cal .bar i { display: block; height: 100%; width: 0; background: #fff; transition: width .4s ease; }
+  @media (max-width: 640px) {
+    #cal .sheet { grid-template-columns: 48px 1fr; }
+    #cal .btns { grid-column: 1 / -1; grid-row: auto; margin-top: 12px; }
+    #cal .btn { flex: 1; min-width: 0; }
+  }
 </style>
 </head>
 <body>
@@ -204,6 +234,15 @@
     <div id="askText"></div>
     <div class="btns"><button class="btn" id="deny">Deny</button><button class="btn primary" id="approve">Allow</button></div>
     <div class="timer"><i id="askTimer"></i></div>
+  </div>
+</div>
+<div id="cal" hidden role="status" aria-live="polite" aria-labelledby="calTitle" aria-describedby="calText">
+  <div class="sheet">
+    <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg></div>
+    <div id="calTitle">Turn the iPhone upright</div>
+    <div id="calText"></div>
+    <div class="btns"><button class="btn" id="calLater">Later</button><button class="btn primary" id="calRetry" hidden>Try again</button></div>
+    <div class="bar"><i id="calBar"></i></div>
   </div>
 </div>
 <div id="phone">
@@ -339,7 +378,7 @@ function newDecoder() {
       if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
         canvas.width = frame.displayWidth; canvas.height = frame.displayHeight;
         const sideways = frame.displayWidth > frame.displayHeight;
-        if (sideways !== frameSideways) { frameSideways = sideways; layout(); }
+        if (sideways !== frameSideways) { frameSideways = sideways; layout(); showCalibration(); }
       }
       ctx.drawImage(frame, 0, 0);
       frame.close();
@@ -436,7 +475,7 @@ function connect() {
     const wasLive = state.live;
     state = msg;
     if (!state.live) { if (wasLive) playing = false; blank(); frameSideways = null; }
-    layout(); updateNote(); showAgent();
+    layout(); updateNote(); showAgent(); showCalibration();
     scr.classList.toggle("stale", !!state.stale);
     awakeSw.setAttribute("aria-checked", !!state.awake);
     document.getElementById("btDown").hidden = state.bluetooth !== false;
@@ -681,6 +720,7 @@ function showAsk(id, kind, action, deadline) {
   const fresh = id && id !== askId;
   const started = deadline && deadline !== askDeadline;  // a countdown starts once the phone has the request
   askId = id; askKind = kind; askDeadline = deadline || null; ask.hidden = !id;
+  showCalibration();  // an agent's request takes the calibration toast's place, and gives it back
   clearInterval(askTick);
   if (!id) return;
   const title = document.getElementById("askTitle"), timer = document.getElementById("askTimer");
@@ -715,6 +755,54 @@ async function answer(approve) {
   showAsk(null, askKind);
 }
 document.getElementById("approve").onclick = () => answer(true);
+
+// ---- the pointer's calibration (calibrate.py): it measures an upright phone only, so while it
+// waits for one this page says to turn the phone; then it shows the measurement, and a failure ----
+const cal = document.getElementById("cal");
+let calHidden = null;  // the state + phone the owner dismissed ("Later"): it stays hidden until that changes
+function showCalibration() {
+  const c = state.calibration;
+  const key = c && `${c.state}|${c.phone}|${c.state === "failed" ? c.message : ""}`;
+  if (c && !c.seenAt) c.seenAt = Date.now();  // its age was as of the server's message
+  const age = c ? c.age + (Date.now() - c.seenAt) / 1000 : 0;
+  const show = c && key !== calHidden && ask.hidden && state.live && (
+    c.state === "waiting_upright" || c.state === "running" || (c.state === "failed" && age < 600) ||
+    (c.state === "done" && age < 8));
+  cal.hidden = !show;
+  if (!show) return;
+  // the picture turned upright before the server noticed: say so at once
+  const upright = c.state === "waiting_upright" && frameSideways === false;
+  const st = upright ? "running" : c.state;
+  cal.className = { waiting_upright: "upright", running: "running" }[st] || "";
+  const phoneName = c.phone || "the iPhone";
+  const [title, text] = {
+    waiting_upright: ["Turn the iPhone upright",
+                      `Phone Use measures ${phoneName}'s pointer only in portrait. It starts as soon as the phone is upright.`],
+    running: ["Measuring the pointer",
+              "About 13 seconds. Keep the iPhone upright and leave it alone; this page's mouse is paused."],
+    failed: ["Calibration didn't work", (c.message || "") + " Keep the iPhone upright and try again."],
+    done: ["Pointer calibrated", "Drags and swipes now go the right distance on this phone."],
+  }[st];
+  document.getElementById("calTitle").textContent = title;
+  document.getElementById("calText").textContent = text;
+  const steps = c.steps || 7, step = c.state === "running" ? (c.step || 0) : (c.state === "done" ? steps : 0);
+  document.getElementById("calBar").style.width = `${Math.round(100 * step / steps)}%`;
+  document.getElementById("calRetry").hidden = st !== "failed";
+  document.getElementById("calLater").hidden = st === "running" || st === "done";
+  document.getElementById("calLater").textContent = st === "failed" ? "Dismiss" : "Later";
+  if (c.state === "done") setTimeout(showCalibration, Math.max(0, (8 - age) * 1000) + 50);
+}
+document.getElementById("calLater").onclick = () => {
+  const c = state.calibration;
+  calHidden = c && `${c.state}|${c.phone}|${c.state === "failed" ? c.message : ""}`;
+  cal.hidden = true;
+};
+document.getElementById("calRetry").onclick = async () => {
+  const r = await fetch("/api/calibrate", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok && j.error) { document.getElementById("calText").textContent = j.error; return; }
+  if (j.calibration) { state.calibration = j.calibration; showCalibration(); }
+};
 document.getElementById("deny").onclick = () => answer(false);
 
 

@@ -143,8 +143,13 @@ def checklist(s, name):
             done=s.get("bluetooth"), action="setup_bridge", bold=pc)
     add("pointer", "Turn on AssistiveTouch",
         "On the iPhone: Settings › Accessibility › Touch › AssistiveTouch on, and Dwell Control off. iOS ignores "
-        "a mouse without it. Then Phone Use measures this phone's pointer, for about 13 seconds: leave the "
-        "phone alone until it's done.", done=s.get("calibrated"))
+        "a mouse without it. Then Phone Use measures this phone's pointer, for about 13 seconds, with the "
+        "phone upright: leave it alone until it's done.", done=s.get("calibrated"), action="calibrate")
+    cal = s.get("calibration") or {}
+    items[-1]["calibration"] = cal.get("state")
+    note = calibration_note(cal)
+    if note and not s.get("calibrated"):
+        items[-1]["detail"] = note
     add("app", "Pair the Phone Use app",
         "Agents can use the phone only once the Phone Use app (App Store) is paired: it's where you allow "
         "and stop them.", done=s.get("paired"), action="pair_app")
@@ -155,3 +160,23 @@ def checklist(s, name):
             "Claude Code finds it.", done=claude.get("skill") and claude.get("command"), optional=True,
             action="claude")
     return items
+
+
+def calibration_note(cal):
+    """The pointer step's text while its measurement waits, runs or failed (calibrate.status()),
+    or None to keep the usual text."""
+    st = (cal or {}).get("state")
+    if st == "waiting_upright":
+        return "Turn the iPhone upright (portrait). Phone Use measures its pointer only that way, and starts as soon as it is."
+    if st == "running":
+        step, steps = cal.get("step"), cal.get("steps")
+        n = f" ({int(step) + 1} of {steps})" if isinstance(step, int) and steps else ""
+        return f"Measuring the pointer{n}. Keep the iPhone upright and leave it alone."
+    if st in ("waiting_link", "waiting_pointer", "waiting_unlock"):
+        return {"waiting_link": "Waiting for the iPhone's Bluetooth link before measuring the pointer.",
+                "waiting_pointer": "Waiting for the pointer to show on the iPhone (AssistiveTouch on).",
+                "waiting_unlock": "Unlock the iPhone: Phone Use measures its pointer once it's unlocked."}[st]
+    if st == "failed":
+        return "Measuring the pointer didn't work: " + (cal.get("message") or "try again") + \
+            " Keep the iPhone upright and press Calibrate."
+    return None
