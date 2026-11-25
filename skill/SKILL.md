@@ -231,11 +231,21 @@ choices.
   that would do so.
 - Prompts are one line, at most a few sentences, using US-keyboard characters
   only.
-- **If a model's shortcut is missing,** `siriai` says so and gives the exact
-  steps to build it. Ask the owner whether they want to make it or want you to
-  make it with the tools above. Then follow the steps exactly: the shortcut
-  name, the input prompt `phoneuse model prompt` and the alert title
-  `phoneuse model answer` must match character for character.
+- **If a model's shortcut is missing,** `siriai` says so and gives its iCloud
+  link. Ask the owner whether they want to add it or want you to. Opening the
+  link in Safari on the iPhone shows an Add Shortcut button; the Phone Use
+  iPhone app's Agents tab also links all three, under Apple Intelligence:
+
+  | Shortcut | Link |
+  |---|---|
+  | PhoneUse On-Device | https://www.icloud.com/shortcuts/f76f5ae481854d139c6d786c267d69e7 |
+  | PhoneUse Cloud | https://www.icloud.com/shortcuts/82f5af01617e4584bfe01ad3c08816c0 |
+  | PhoneUse Cloud Pro | https://www.icloud.com/shortcuts/a2e0e65830b24c1ba382379b74154465 |
+
+  If a link fails, `siriai` also gives the steps to build the shortcut by
+  hand. Follow them exactly: the shortcut name, the input prompt
+  `phoneuse model prompt` and the alert title `phoneuse model answer` must
+  match character for character.
 
 ## Typing
 

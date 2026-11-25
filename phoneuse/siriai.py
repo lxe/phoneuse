@@ -16,6 +16,11 @@ SIRI = "siri-plus-context"
 SHORTCUTS = {"on-device": "PhoneUse On-Device", "cloud": "PhoneUse Cloud", "cloud-pro": "PhoneUse Cloud Pro"}
 # Use Model's menu on iOS 27, read on 2026-11-24: Cloud ("Great, fast answers"), Cloud Pro ("Increased
 # reasoning"), On-Device ("Works offline"), ChatGPT, Ask Each Time.
+# Signed copies of the three shortcuts, shared from iCloud on 2026-11-25. On an iPhone each link opens
+# Shortcuts' Add Shortcut sheet; the same files are in the repository's shortcuts/ folder.
+SHORTCUT_LINKS = {"on-device": "https://www.icloud.com/shortcuts/f76f5ae481854d139c6d786c267d69e7",
+                  "cloud": "https://www.icloud.com/shortcuts/82f5af01617e4584bfe01ad3c08816c0",
+                  "cloud-pro": "https://www.icloud.com/shortcuts/a2e0e65830b24c1ba382379b74154465"}
 MODEL_MENU = {"on-device": "On-Device", "cloud": "Cloud", "cloud-pro": "Cloud Pro"}
 MODES = {
     SIRI: "Siri itself, typed to in the Siri app. The only mode with the owner's personal context (messages, "
@@ -242,9 +247,13 @@ def create_steps(mode):
     name = SHORTCUTS[mode]
     return (f'The "{name}" shortcut isn\'t on this iPhone. No prompt was sent.\n'
             f"To use --{mode}, the shortcut has to exist. Ask the owner whether they want to make it or want you "
-            "to make it with the phone tools. The shortcut must be exactly:\n"
+            "to add it with the phone tools.\n"
+            f"To add the ready-made one, open {SHORTCUT_LINKS[mode]} in Safari on the iPhone and tap "
+            "Add Shortcut. The Phone Use iPhone app's Agents tab links all three, under Apple Intelligence. "
+            "Then run siriai again.\n"
+            "If the link doesn't work, build it by hand. It must be exactly:\n"
             f"{shortcut_spec(mode)}\n"
-            "To make it:\n"
+            "To build it:\n"
             "1. In Shortcuts, on All Shortcuts, tap + at the bottom. A \"Describe a shortcut\" field opens.\n"
             f"2. Type this into it, then press Return:\n   {describe_shortcut(mode)}\n"
             "3. Tap Edit. Expand each action (its > button) and check every field against the spec above. "
