@@ -109,6 +109,10 @@ def open_app(h, name):
     cli.open_app(h, name)
 
 
+# The Conversations list's header: y 0.160 on an iPhone 17 Pro (2026-11-25), higher on larger phones
+CONVERSATIONS_TOP = 0.2
+
+
 def siri_field(lines):
     if cli.spotlight_open(lines):
         return None  # Spotlight can display the same placeholder.
@@ -121,7 +125,7 @@ def siri_draft(lines):
     y 0.612) beside the draft's last line ("number only."); OCR missed the send arrow at the right end
     in some reads. A keyboard row has ten keys, and its bottom row ("123", space) holds no text. The
     tap goes to the field; typing then replaces the old text."""
-    if cli.spotlight_open(lines) or target([line for line in lines if line[1] < 0.15], "conversations"):
+    if cli.spotlight_open(lines) or target([line for line in lines if line[1] < CONVERSATIONS_TOP], "conversations"):
         return None
     for x, y, text in lines:
         if not (x < 0.15 and 0.5 < y < 0.97 and len(text.strip()) <= 2):
@@ -139,7 +143,7 @@ def siri_ready(lines):
     field = siri_field(lines) or siri_draft(lines)
     if field:
         return "field", field
-    if target([line for line in lines if line[1] < 0.15], "conversations"):
+    if target([line for line in lines if line[1] < CONVERSATIONS_TOP], "conversations"):
         corner = [line for line in lines if line[0] > 0.7 and line[1] > 0.88]
         if len(corner) == 1 and len(corner[0][2].strip()) <= 2:
             return "compose", corner[0][:2]
