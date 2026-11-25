@@ -67,6 +67,8 @@ def steady(value):
 
 
 def wait_for(find, timeout, failure, quiet=0):
+    """The first value find() gives a settled screen; stops the run with `failure` after `timeout` s,
+    or returns None then when failure is None."""
     deadline = time.monotonic() + timeout
     prior, since, stale_since = None, None, None
     while (now := time.monotonic()) < deadline:
@@ -89,6 +91,8 @@ def wait_for(find, timeout, failure, quiet=0):
         pause = min(0.35 - (time.monotonic() - began), deadline - time.monotonic())
         if pause > 0:
             time.sleep(pause)
+    if failure is None:
+        return None
     cli.die(failure)
 
 
@@ -119,6 +123,11 @@ def siri_field(lines):
     return target([line for line in lines if line[1] > 0.5], *SIRI_FIELDS)
 
 
+def keyboard_up(lines):
+    """The on-screen keyboard: its letter rows read as ten or more single letters low on the screen."""
+    return sum(1 for _, y, text in lines if 0.6 < y < 0.9 and len(text.strip()) == 1 and text.strip().isalpha()) >= 10
+
+
 def siri_draft(lines):
     """The composer when text is already in it, so its "Ask Siri" placeholder is gone: a failed run left
     its prompt there (2026-11-24). Its + button reads as one short token at the row's left end (x 0.099,
@@ -133,6 +142,15 @@ def siri_draft(lines):
         row = [line for line in lines if abs(line[1] - y) < 0.015]
         if len(row) <= 4 and any(0.15 < rx < 0.85 and len(rtext.strip()) > 2 for rx, _, rtext in row):
             return 0.5, y
+    # OCR can miss the + button and read only the send arrow at the row's right end ("个" at x 0.892,
+    # y 0.598 on an iPhone 17 Pro, 2026-11-25). Only with the keyboard up, so a reply's line can't pass.
+    if keyboard_up(lines):
+        for x, y, text in lines:
+            if not (x > 0.85 and 0.5 < y < 0.97 and len(text.strip()) <= 2):
+                continue
+            row = [line for line in lines if abs(line[1] - y) < 0.015]
+            if len(row) <= 3 and any(0.15 < rx < 0.85 and len(rtext.strip()) > 2 for rx, _, rtext in row):
+                return 0.5, y
     return None
 
 
@@ -384,6 +402,12 @@ def ask(h, prompt, mode, timeout):
     cli.refuse_if_locked()
     if not picture_ready():
         cli.die("The iPhone mirror is stale. No prompt was submitted.")
+    if not on_device:
+        # Keys sent while the field is still taking focus can land out of order: the first letter of
+        # "What time is sunset today?" ended up last on an iPhone 17 Pro (2026-11-25). The keyboard
+        # showing means the field has focus. It may stay hidden while a hardware keyboard is
+        # connected, so this only waits, briefly.
+        wait_for(keyboard_up, 2, None)
     cli.key_combo(h, "cmd+a")
     cli.type_text(h, prompt)
 
@@ -405,7 +429,11 @@ def ask(h, prompt, mode, timeout):
             if not cli.spotlight_open(lines) and hits:
                 return composer[hits[-1][0]][1], {normalized(text) for _, _, text in lines}
 
-        draft = wait_for(draft_lines, 5, failure)
+        draft = wait_for(draft_lines, 5, None)
+        if not draft:  # typed out of order or not at all: select it all and type it once more
+            cli.key_combo(h, "cmd+a")
+            cli.type_text(h, prompt)
+            draft = wait_for(draft_lines, 5, failure)
         cli.key_combo(h, "enter")
         cli.acted(h.first_seq)
         find_reply = lambda lines: siri_reply(lines, prompt, draft)

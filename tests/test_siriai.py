@@ -125,7 +125,7 @@ def test_cloud_searches_the_app_and_never_picks_cloud_pro(monkeypatch):
 
 def test_siri_starts_a_new_conversation_from_the_conversations_list(monkeypatch):
     prompt = "Ounces in a pound"
-    keyboard = [(0.5, 0.72, "Q"), (0.5, 0.83, "Z")]
+    keyboard = [(0.057 + 0.098 * i, 0.72, c) for i, c in enumerate("QWERTYUIOP")] + [(0.5, 0.83, "Z")]
     actions = phone(monkeypatch, [
         [(0.5, 0.088, "Conversations"), (0.4, 0.2, "An old chat"), (0.13, 0.938, "Q"), (0.87, 0.937, "0")],
         [(0.28, 0.611, "Ask Siri")] + keyboard,
@@ -254,3 +254,27 @@ def test_rejects_unsupported_prompts_before_connecting(monkeypatch, prompt):
     monkeypatch.setattr(siriai, "picture_ready", lambda: pytest.fail("Connected to the phone"))
     with pytest.raises(SystemExit, match="2"):
         siriai.run([prompt])
+
+
+# Read on an iPhone 17 Pro (2026-11-25): the Siri composer with a draft and the keyboard up. OCR read the
+# send arrow ("个") but not the + button at the row's left end.
+KEYBOARD = [(0.059 + 0.0985 * i, 0.709, c) for i, c in enumerate("qWertyuiop")] + \
+    [(0.106 + 0.0985 * i, 0.770, c) for i, c in enumerate("aSdfghjk")] + [(0.071, 0.893, "123")]
+DRAFT_17PRO = [(0.141, 0.037, "9:51"), (0.338, 0.598, "Hello therel"), (0.892, 0.598, "个"),
+               (0.499, 0.653, "the"), (0.833, 0.653, "they")] + KEYBOARD
+CONVERSATIONS_17PRO = [(0.326, 0.160, "Conversations"), (0.211, 0.224, "Previous 30 Days"), (0.098, 0.277, "Notes"),
+                       (0.212, 0.303, "Here are your notes."), (0.147, 0.710, "New Photo"), (0.855, 0.933, "0")]
+
+
+def test_draft_with_only_the_send_arrow_read():
+    from phoneuse import siriai
+    assert siriai.keyboard_up(DRAFT_17PRO)
+    assert siriai.siri_draft(DRAFT_17PRO) == (0.5, 0.598)
+    no_keyboard = [line for line in DRAFT_17PRO if line not in KEYBOARD]
+    assert siriai.siri_draft(no_keyboard) is None  # a reply's line ending in a short token doesn't pass
+
+
+def test_conversations_header_lower_on_a_17_pro():
+    from phoneuse import siriai
+    assert siriai.siri_ready(CONVERSATIONS_17PRO) == ("compose", (0.855, 0.933))
+    assert siriai.siri_draft(CONVERSATIONS_17PRO) is None
