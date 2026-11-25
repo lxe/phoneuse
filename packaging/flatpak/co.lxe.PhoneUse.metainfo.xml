@@ -13,6 +13,7 @@
   <url type="homepage">https://github.com/lxe/phoneuse</url>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.7" date="2026-11-25"/>
     <release version="0.1.6" date="2026-11-22"/>
     <release version="0.1.5" date="2026-11-22"/>
     <release version="0.1.4" date="2026-11-13"/>
