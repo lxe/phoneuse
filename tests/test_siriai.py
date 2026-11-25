@@ -278,3 +278,20 @@ def test_conversations_header_lower_on_a_17_pro():
     from phoneuse import siriai
     assert siriai.siri_ready(CONVERSATIONS_17PRO) == ("compose", (0.855, 0.933))
     assert siriai.siri_draft(CONVERSATIONS_17PRO) is None
+
+
+def test_library_page_opens_all_shortcuts_and_wrapped_names_match_their_own_tile(monkeypatch):
+    # Read on an iPhone 17 Pro on 2026-11-25: Shortcuts opened on Library, and the grid wrapped each name
+    prompt = "Rewrite this"
+    library = [(0.74, 0.096, "Edit"), (0.18, 0.162, "Library"), (0.29, 0.222, "All Shortcuts"),
+               (0.85, 0.222, "22"), (0.28, 0.281, "Share Sheet")]
+    grid = [(0.86, 0.096, "Select"), (0.30, 0.161, "All Shortcuts"), (0.17, 0.217, "Q Search"),
+            (0.180, 0.334, "PhoneUse"), (0.185, 0.358, "On-Device"), (0.716, 0.358, "PhoneUse Cloud"),
+            (0.180, 0.474, "PhoneUse"), (0.695, 0.474, "PhoneUse On-"), (0.177, 0.499, "Cloud Pro"),
+            (0.637, 0.499, "Device 2")]
+    actions = phone(monkeypatch, [library, grid] + model_frames(prompt))
+    assert siriai.ask(object(), prompt, "on-device", timeout=3) == "A new title"
+    assert actions[:3] == ["Shortcuts", (0.29, 0.222), siriai.tile_play(grid, (0.180, 0.334))]
+    named = siriai.tile_names(grid)
+    assert siriai.target(named, "PhoneUse Cloud Pro") == (0.180, 0.474)
+    assert siriai.target(named, "PhoneUse Cloud") == (0.716, 0.358)

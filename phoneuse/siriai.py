@@ -271,13 +271,19 @@ def open_shortcut(h, mode):
             title = target([line for line in lines if line[1] < 0.12], name)
             return ("run", play) if title else ("dismiss", back_button())
         # Not the title bar: a summary or editor page is titled with the shortcut's name
-        tile = target([line for line in lines if line[1] > 0.12], name)
+        tile = target(tile_names([line for line in lines if line[1] > 0.12]), name)
         if tile:
             return "open", tile_play(lines, tile)
         # Only All Shortcuts' own search: on 2026-11-24 a run typed the name into a shortcut editor's
         # action search and reported the shortcut missing.
         heading = target([line for line in lines if line[1] < 0.2], "all shortcuts")
         if not heading:
+            # On 2026-11-25 an iPhone 17 Pro on iOS 26 opened Shortcuts on its Library page: "Library" titles
+            # a list whose first row, "All Shortcuts", opens the grid.
+            if target([line for line in lines if line[1] < 0.2], "library"):
+                row = target([line for line in lines if line[1] < 0.4], "all shortcuts")
+                if row:
+                    return "library", row
             return None
         search = target([line for line in lines if heading[1] < line[1] < 0.35], "search", "q search")
         if search:
@@ -289,7 +295,9 @@ def open_shortcut(h, mode):
     lost = ("Shortcuts didn't show All Shortcuts (it may have an editor or a folder open). "
             "Go back to All Shortcuts and retry. No prompt was sent.")
     action, pos = wait_for(tile_search_or_old_alert, 5, lost, quiet=0.5)
-    if action == "dismiss":
+    for _ in range(2):
+        if action not in ("dismiss", "library"):
+            break
         tap(h, pos)
         action, pos = wait_for(tile_search_or_old_alert, 5, lost, quiet=0.5)
     if action == "missing":
@@ -348,6 +356,19 @@ def tile_play(lines, tile):
     bottom = max([tile[1]] + [y for x, y, _ in lines if (x < 0.5) == left and 0 < y - tile[1] < 0.035])
     right_edge = 20 + (width - 50) / 2 if left else width - 20
     return points(right_edge - 30, bottom * height - 53.5)
+
+
+def tile_names(lines):
+    """The lines with each grid tile's wrapped name also read whole. On 2026-11-25 an iPhone 17 Pro
+    wrapped "PhoneUse On-Device" as "PhoneUse" over "On-Device", 0.024 of the screen below it and
+    starting within 0.01 of the first line's centre. The joined name keeps the first line's position,
+    from which tile_play finds the button."""
+    joined = []
+    for x, y, text in lines:
+        below = [(bx, by, bt) for bx, by, bt in lines if 0 < by - y < 0.035 and abs(bx - x) < 0.04]
+        if len(below) == 1:
+            joined.append((x, y, f"{text} {below[0][2]}"))
+    return lines + joined
 
 
 def summary_play(lines):
