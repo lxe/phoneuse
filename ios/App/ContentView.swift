@@ -381,6 +381,7 @@ struct AgentsTab: View {
                 }
                 .disabled(offline)
             }
+            AppleIntelligenceSection()
         }
         .toolbar(.hidden, for: .navigationBar)  // the tab bar names the tab
         .refreshable { await model.refresh() }
@@ -850,6 +851,36 @@ struct StartModeRow: View {
             }
             .pickerStyle(.menu)
             .accessibilityIdentifier("sessionSeconds")
+        }
+    }
+}
+
+/// One tap installs each shortcut `phoneuse siriai` runs (phoneuse/siriai.py). They're signed .shortcut files
+/// in the repository's shortcuts/ folder; iOS names an added shortcut after its file, so the files carry the
+/// exact names siriai looks for.
+struct AppleIntelligenceSection: View {
+    @Environment(\.openURL) private var openURL
+    static let base = "https://github.com/lxe/phoneuse/raw/siriai-shortcuts/shortcuts/"
+    static let shortcuts = [("PhoneUse On-Device", "The model on this iPhone"),
+                            ("PhoneUse Cloud", "Private Cloud Compute"),
+                            ("PhoneUse Cloud Pro", "Apple's largest cloud model")]
+
+    var body: some View {
+        Section {
+            ForEach(Self.shortcuts, id: \.0) { name, subtitle in
+                Button {
+                    let file = (name + ".shortcut").addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!
+                    if let url = URL(string: Self.base + file) { openURL(url) }
+                } label: {
+                    RowTitle("Add \u{201C}\(name)\u{201D}", subtitle)
+                }
+                .tint(.primary)
+                .accessibilityIdentifier("shortcut-\(name)")
+            }
+        } header: {
+            Text("Apple Intelligence")
+        } footer: {
+            Text("Agents use these shortcuts to ask Apple's models.")
         }
     }
 }
