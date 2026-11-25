@@ -127,6 +127,16 @@ def button(label, style=None, on=None):
     return b
 
 
+def icon_button(icon, tip, on):
+    """A small round flat button with only an icon; `tip` is its tooltip and accessible name."""
+    b = Gtk.Button(icon_name=icon, tooltip_text=tip, valign=Gtk.Align.CENTER)
+    b.add_css_class("flat")
+    b.add_css_class("circular")
+    b.update_property([Gtk.AccessibleProperty.LABEL], [tip])
+    b.connect("clicked", lambda *_: on())
+    return b
+
+
 def qr_texture(link):
     """A QR code for `link` (shown in a Gtk.Picture with the "qr" class: rounded corners)."""
     import io
@@ -471,6 +481,7 @@ class Window(Adw.ApplicationWindow):
         st = b.get("status") or {}
         r = Adw.ActionRow(title=f"Bridge {saved['id'][-4:]}", subtitle=saved.get("ip") or "")
         state = Gtk.Label(valign=Gtk.Align.CENTER)
+        drop = None  # after the phone's name: drop the bridge's phone until mirroring starts again
         if st.get("error"):
             state.set_label("Offline")
             state.add_css_class("error")
@@ -478,11 +489,11 @@ class Window(Adw.ApplicationWindow):
             state.set_label(b["other_phone"])
             state.add_css_class("warning")
             r.set_subtitle(f"Not the mirroring {b.get('mirroring_phone') or 'iPhone'}")
-            r.add_suffix(button("Disconnect", None, self._disconnect_bridge_phone))
+            drop = icon_button("window-close-symbolic", "Disconnect", self._disconnect_bridge_phone)
         elif st.get("connected"):  # the iPhone's name, after a phone icon, in plain text
             state.set_label(st.get("phone") or "iPhone")
             r.add_suffix(Gtk.Image(icon_name="phone-symbolic"))
-            r.add_suffix(button("Disconnect", None, self._disconnect_bridge_phone))
+            drop = icon_button("window-close-symbolic", "Disconnect", self._disconnect_bridge_phone)
         elif st.get("standby"):  # no phone mirrors: the bridge stays off the iPhone until one does
             state.set_label("Waiting for mirroring")
             state.add_css_class("dim-label")
@@ -492,6 +503,8 @@ class Window(Adw.ApplicationWindow):
             state.add_css_class("warning")
             r.set_subtitle("On the iPhone: Settings › Bluetooth › Phone Use Bridge")
         r.add_suffix(state)
+        if drop:
+            r.add_suffix(drop)
         add(r)
         use = Adw.SwitchRow(title="Enable Input",
                             active=saved.get("use", True))
