@@ -135,7 +135,7 @@ TOOLS = {
         "calendar, the screen) and app intents, so it can act in apps; get the owner's OK before anything it "
         "would send, buy or change. on-device (small, private, quickest), cloud (Private Cloud Compute, larger, "
         "may use the web) and cloud-pro (largest, slowest, tight daily limits) run a PhoneUse shortcut and see "
-        "only the prompt. If a model's shortcut is missing, the result says how to create it.",
+        "only the prompt. If a model's shortcut is missing, the result gives its iCloud link to add it.",
         ("prompt",), {"model": "--model", "timeout": "--timeout"},
         {"prompt": STRING, "model": {"type": "string", "enum": [
             "siri-plus-context", "on-device", "cloud", "cloud-pro"]}, "timeout": TIMEOUT}),
