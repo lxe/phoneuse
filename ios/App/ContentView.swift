@@ -855,22 +855,22 @@ struct StartModeRow: View {
     }
 }
 
-/// One tap installs each shortcut `phoneuse siriai` runs (phoneuse/siriai.py). They're signed .shortcut files
-/// in the repository's shortcuts/ folder; iOS names an added shortcut after its file, so the files carry the
-/// exact names siriai looks for.
+/// One tap installs each shortcut `phoneuse siriai` runs (phoneuse/siriai.py): an iCloud link opens Shortcuts'
+/// Add Shortcut sheet. The links were shared from shortcuts/ in the repository, the source of each shortcut;
+/// a signed file opened from another website only downloads.
 struct AppleIntelligenceSection: View {
     @Environment(\.openURL) private var openURL
-    static let base = "https://github.com/lxe/phoneuse/raw/siriai-shortcuts/shortcuts/"
-    static let shortcuts = [("PhoneUse On-Device", "The model on this iPhone"),
-                            ("PhoneUse Cloud", "Private Cloud Compute"),
-                            ("PhoneUse Cloud Pro", "Apple's largest cloud model")]
+    static let shortcuts = [
+        ("PhoneUse On-Device", "The model on this iPhone", "https://www.icloud.com/shortcuts/f76f5ae481854d139c6d786c267d69e7"),
+        ("PhoneUse Cloud", "Private Cloud Compute", "https://www.icloud.com/shortcuts/82f5af01617e4584bfe01ad3c08816c0"),
+        ("PhoneUse Cloud Pro", "Apple's largest cloud model", "https://www.icloud.com/shortcuts/a2e0e65830b24c1ba382379b74154465"),
+    ]
 
     var body: some View {
         Section {
-            ForEach(Self.shortcuts, id: \.0) { name, subtitle in
+            ForEach(Self.shortcuts, id: \.0) { name, subtitle, link in
                 Button {
-                    let file = (name + ".shortcut").addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!
-                    if let url = URL(string: Self.base + file) { openURL(url) }
+                    if let url = URL(string: link) { openURL(url) }
                 } label: {
                     RowTitle("Add \u{201C}\(name)\u{201D}", subtitle)
                 }
